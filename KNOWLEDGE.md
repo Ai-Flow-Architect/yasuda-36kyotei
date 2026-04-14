@@ -259,6 +259,37 @@ python3 compare_with_originals.py
 - **ファイル**: `mail_drafter.py`
 - **NEVER REPEAT**: IMAP/SMTPなどネットワークI/Oは必ずリトライロジックを入れる。ただし認証失敗にはリトライしない
 
+### BUG-DEPLOY-001: Streamlit Cloud Secrets で日本語キーが "Invalid format: please enter valid TOML." エラー
+- **症状**: Streamlit Cloud の Advanced settings → Secrets に下記を貼ると弾かれる
+  ```toml
+  差出人名 = "あさひ労務管理センター"
+  ```
+- **原因**: TOML仕様では **非ASCII文字をキーに使う場合はクォーテッドキー（ダブルクォート囲み）必須**。Streamlit Cloudのバリデータは厳密にTOML仕様準拠
+- **修正**: 日本語キーをすべて `"..."` で囲む
+  ```toml
+  # NG
+  差出人名 = "あさひ労務管理センター"
+
+  # OK
+  "差出人名" = "あさひ労務管理センター"
+  ```
+- **正しいSecretsテンプレ（yasuda-36kyotei）**:
+  ```toml
+  password = "asahi"
+  yahoo_user = "asahiroumu@yahoo.co.jp"
+  yahoo_password = "bd19960605!"
+  "差出人名" = "あさひ労務管理センター"
+  "差出人所属" = "社会保険労務士法人あさひ労務管理センター"
+  "差出人電話" = "029-8370-209"
+  ```
+- **発見日**: 2026-04-14
+- **ファイル**: `.streamlit/secrets.toml.example`、Streamlit Cloud Advanced settings
+- **NEVER REPEAT**:
+  - 日本語（ASCII以外）キーは必ず `"..."` で囲む
+  - Pythonの `tomllib` も実は厳密で、クォートなし日本語キーは `TOMLDecodeError` を返す
+  - ローカル `secrets.toml` と Cloud Secrets は同じTOMLルールで統一する
+  - 多言語キーが必要なら **ASCIIキー（例: `sender_name`）に統一する方が事故が少ない**（将来の改善案）
+
 ### メール添付改修時の必須チェックリスト
 
 メール下書き機能（`mail_drafter.py`）に変更を加えるときは以下を**全て**実施してから完了とする：
