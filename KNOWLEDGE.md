@@ -259,6 +259,34 @@ python3 compare_with_originals.py
 - **ファイル**: `mail_drafter.py`
 - **NEVER REPEAT**: IMAP/SMTPなどネットワークI/Oは必ずリトライロジックを入れる。ただし認証失敗にはリトライしない
 
+### BUG-MAIL-003: Yahoo Japan IMAP が米国IPからの通常パスワードログインを拒否（Streamlit Cloud等の海外ホスティング全般）
+- **症状**: ローカル（日本IP）では IMAP ログイン成功するのに、Streamlit Cloud（米国IP）にデプロイすると `IMAP認証/APPENDエラー: b'[AUTHENTICATIONFAILED] Incorrect username or password.'` で失敗する。パスワードは正しい
+- **原因**: Yahoo! JAPAN メールは「普段と違う場所からのアクセス」をセキュリティ機構で検知してブロックする。米国IPからの通常パスワードログインはほぼ必ず弾かれる。**通常のYahoo!ログインパスワードでは、海外ホスティング（Streamlit Cloud / Heroku / Render / Vercel Functions / AWS Lambda 等）からはIMAPに繋がらない**
+- **解決策**: **Yahoo!メール「アクセスキー」**（IMAP/POP/SMTP専用パスワード）を発行する
+  - 管理画面: https://mail.yahoo.co.jp/promo/imap.html または `https://account.edit.yahoo.co.jp/` → ログインとセキュリティ → メールへの外部アクセス
+  - 「IMAP/POP/SMTPアクセスを有効にする」をON → 「アクセスキー発行」ボタン → 20桁前後のキーが表示される
+  - このキーを `secrets.toml` の `yahoo_password` に設定すれば米国IPからでも認証通る
+  - **アクセスキーは通常ログインには使えない**（漏洩しても被害最小）
+  - **セキュリティーパック加入者**でなくても発行可能（無料アカウントでもOKなケースが多い）
+- **検証方法**:
+  ```bash
+  # ローカルで動くか先に確認
+  python3 -c "
+  import imaplib
+  m = imaplib.IMAP4_SSL('imap.mail.yahoo.co.jp', 993)
+  m.login('asahiroumu@yahoo.co.jp', 'アクセスキー')
+  print('login OK')
+  m.logout()
+  "
+  ```
+- **発見日**: 2026-04-14（安田さん36協定ツールのStreamlit Cloudデプロイ時）
+- **ファイル**: `mail_drafter.py`、`.streamlit/secrets.toml`
+- **NEVER REPEAT**:
+  - **Yahoo Japanメール連携機能を作るときは、最初からアクセスキー発行を前提にする**。通常ログインパスワードを設計に組み込まない
+  - クライアントへのヒヤリングシートに「Yahoo!メールアクセスキー発行可否」を必ず入れる
+  - ローカル開発では通常パスワードでも動くため**本番（クラウド）に上げて初めて発覚**する罠。デプロイ前にクライアントへ事前依頼しておく
+  - Gmail も同様に「アプリパスワード」が必要（こちらは2段階認証必須が前提）。**全てのメールサービスは IMAP 用に専用認証を分離するのが正解**
+
 ### BUG-DEPLOY-001: Streamlit Cloud Secrets で日本語キーが "Invalid format: please enter valid TOML." エラー
 - **症状**: Streamlit Cloud の Advanced settings → Secrets に下記を貼ると弾かれる
   ```toml
