@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+*.egg-info/
+
+# 認証情報・Cookie（絶対にコミットしない）
+.streamlit/secrets.toml
+config_local.json
+yahoo_cookies.json
+*_cookies.json
+.env
+.env.*
+
+# 生成物（成果物・テスト結果）
+output/
+test_output/
+test_output_all7/
+test_output_original_data/
+demo_output/
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
