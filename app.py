@@ -2,7 +2,7 @@
 36協定自動化ツール - Streamlit Webアプリ（Pattern A）
 社労士事務所向け。
 Excel（管理情報）+ Word（完成済み協定書）をアップロード
-→ 事業所名マッチング → Word→PDF変換 → Yahoo Mail 下書き一括保存
+→ 事業所名マッチング → Word→PDF変換（飯塚様確認）→ Yahoo Mail 下書き一括保存
 """
 import base64
 import io
@@ -171,8 +171,9 @@ def main() -> None:
         "match_table": [],
         "last_excel_name": "",
         "last_word_names": [],
-        "draft_results": [],
         "pdf_zip_bytes": None,
+        "pdf_data": [],        # PDF変換済みデータ（Yahoo下書き用）
+        "draft_results": [],
         "_word_tmp_dir": "",
     }
     for k, v in defaults.items():
@@ -205,8 +206,9 @@ def main() -> None:
         st.session_state.last_excel_name = uploaded_excel.name
         st.session_state.records = []
         st.session_state.match_table = []
-        st.session_state.draft_results = []
         st.session_state.pdf_zip_bytes = None
+        st.session_state.pdf_data = []
+        st.session_state.draft_results = []
 
     # Excel読み取り
     if not st.session_state.records:
@@ -253,12 +255,12 @@ def main() -> None:
     st.dataframe(preview_rows, use_container_width=True, hide_index=True)
 
     # --------------------------------------------------------
-    # STEP 3: Word アップロード → PDF変換 + メール下書き一括保存
+    # STEP 3: Word アップロード → PDF変換 → 飯塚様確認
     # --------------------------------------------------------
     st.markdown("""
     <div class="step-box">
         <div class="step-label">STEP 3</div>
-        <div class="step-title">📄 Wordをアップロードし、メールの下書きとPDFを一括生成</div>
+        <div class="step-title">📄 Wordをアップロードして、PDFに変換・内容を確認</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -274,13 +276,14 @@ def main() -> None:
         _show_footer()
         return
 
-    # Wordファイルが変わったらマッチングをリセット
+    # Wordファイルが変わったらリセット
     current_word_names = sorted(f.name for f in uploaded_words)
     if st.session_state.last_word_names != current_word_names:
         st.session_state.last_word_names = current_word_names
         st.session_state.match_table = []
-        st.session_state.draft_results = []
         st.session_state.pdf_zip_bytes = None
+        st.session_state.pdf_data = []
+        st.session_state.draft_results = []
 
     # Wordを一時ファイルに保存しマッチング
     if not st.session_state.match_table:
@@ -321,110 +324,142 @@ def main() -> None:
         f"メール未設定: **{no_email_count}** 件"
     )
 
-    # IMAP設定確認
-    imap_config = get_imap_config()
-    imap_ok = bool(imap_config.get("yahoo_user") and imap_config.get("yahoo_password"))
+    # PDF変換ボタン
+    if not st.session_state.pdf_zip_bytes:
+        if st.button("📄 PDFを一括生成する", type="primary", use_container_width=True):
+            _run_pdf_only(match_table)
 
-    if not imap_ok:
-        st.error(
-            "⚠️ Yahoo Mail の設定が完了していません。"
-            "（yahoo_user / yahoo_password 未設定）"
-        )
-        _show_footer()
-        return
-
-    st.info(f"📤 差出人アカウント: **{imap_config.get('yahoo_user', '')}**")
-    confirmed = st.checkbox("上記の内容を確認しました。PDF変換してメール下書きを保存します。")
-
-    if confirmed:
-        if st.button(
-            "📨 PDF変換 + メール下書きを一括保存する",
-            type="primary",
+    # PDF生成済み → ダウンロード + 確認チェック
+    if st.session_state.pdf_zip_bytes:
+        st.success(f"✅ **{len(st.session_state.pdf_data)} 件** のPDFを生成しました。")
+        st.download_button(
+            label="📥 PDF ZIP をダウンロードして内容を確認する",
+            data=st.session_state.pdf_zip_bytes,
+            file_name="36協定書_PDF一括.zip",
+            mime="application/zip",
             use_container_width=True,
-        ):
-            _run_pdf_and_draft(match_table, imap_config)
+        )
 
-    # 実行結果表示
-    if st.session_state.draft_results:
-        ok_count = sum(1 for r in st.session_state.draft_results if "成功" in str(r["結果"]))
-        fail_count = len(st.session_state.draft_results) - ok_count
+        # --------------------------------------------------------
+        # STEP 4: PDF確認済み → Yahoo下書き一括保存
+        # --------------------------------------------------------
+        st.markdown("""
+        <div class="step-box">
+            <div class="step-label">STEP 4</div>
+            <div class="step-title">📨 PDFを確認したら、Yahoo メールの下書きを一括保存する</div>
+        </div>
+        """, unsafe_allow_html=True)
 
-        if fail_count == 0:
-            st.markdown(
-                f'<div class="result-card">✅ <strong>{ok_count} 件</strong> '
-                f'すべて完了しました。Yahoo Mail の下書きフォルダをご確認ください。</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.warning(f"{ok_count} 件成功 / {fail_count} 件失敗")
+        imap_config = get_imap_config()
+        imap_ok = bool(imap_config.get("yahoo_user") and imap_config.get("yahoo_password"))
 
-        st.dataframe(st.session_state.draft_results, use_container_width=True, hide_index=True)
+        if not imap_ok:
+            st.error("⚠️ Yahoo Mail の設定が完了していません。（yahoo_user / yahoo_password 未設定）")
+            _show_footer()
+            return
 
-        # PDFをZIPでダウンロード
-        if st.session_state.pdf_zip_bytes:
-            st.download_button(
-                label="📥 PDF ZIP をダウンロード",
-                data=st.session_state.pdf_zip_bytes,
-                file_name="36協定書_PDF一括.zip",
-                mime="application/zip",
+        st.info(f"📤 差出人アカウント: **{imap_config.get('yahoo_user', '')}**")
+        confirmed = st.checkbox("PDFの内容を確認しました。Yahoo メールの下書きに保存します。")
+
+        if confirmed:
+            if st.button(
+                "📨 Yahoo メール下書きを一括保存する",
+                type="primary",
                 use_container_width=True,
-            )
+            ):
+                _run_draft_only(st.session_state.pdf_data, imap_config)
+
+        # 下書き保存結果
+        if st.session_state.draft_results:
+            ok_count = sum(1 for r in st.session_state.draft_results if "成功" in str(r["結果"]))
+            fail_count = len(st.session_state.draft_results) - ok_count
+
+            if fail_count == 0:
+                st.markdown(
+                    f'<div class="result-card">✅ <strong>{ok_count} 件</strong> '
+                    f'すべて完了しました。Yahoo Mail の下書きフォルダをご確認ください。</div>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.warning(f"{ok_count} 件成功 / {fail_count} 件失敗")
+
+            st.dataframe(st.session_state.draft_results, use_container_width=True, hide_index=True)
 
     _show_footer()
 
 
-def _run_pdf_and_draft(match_table: list[dict], imap_config: dict) -> None:
-    """Word→PDF変換 + Yahoo下書き一括保存を実行"""
-    results = []
+def _run_pdf_only(match_table: list[dict]) -> None:
+    """Word→PDF変換のみ実行し、ZIPとpdf_dataをsession_stateに保存する"""
     pdf_zip_buf = io.BytesIO()
+    pdf_data = []
     total = len(match_table)
-    progress = st.progress(0, text="処理中...")
+    progress = st.progress(0, text="PDF変換中...")
 
     with zipfile.ZipFile(pdf_zip_buf, "w", zipfile.ZIP_DEFLATED) as pdf_zf:
         with tempfile.TemporaryDirectory() as pdf_out_dir:
             for i, row in enumerate(match_table):
-                progress.progress((i + 1) / total, text=f"処理中... {i+1}/{total}")
+                progress.progress((i + 1) / total, text=f"PDF変換中... {i+1}/{total}")
                 name = row["事業所名"]
                 email_addr = str(row["送信先メール"])
                 matched_path = row["_matched_path"]
                 record: dict = row["_record"]
 
-                if "⚠️" in email_addr or not email_addr:
-                    results.append({"事業所名": name, "宛先": "（未設定）", "結果": "⚠️ メールアドレスなし"})
-                    continue
-
                 if matched_path is None:
-                    results.append({"事業所名": name, "宛先": email_addr, "結果": "❌ Wordファイル未マッチ"})
                     continue
 
-                # Word → PDF
                 pdf_path = convert_docx_to_pdf(matched_path, Path(pdf_out_dir))
                 if pdf_path is None:
-                    results.append({"事業所名": name, "宛先": email_addr, "結果": "❌ PDF変換失敗"})
                     continue
 
                 pdf_bytes = pdf_path.read_bytes()
                 pdf_filename = f"36協定書_{name}.pdf"
                 pdf_zf.writestr(pdf_filename, pdf_bytes)
 
-                # Yahoo下書き保存
-                subject = build_subject(record)
-                body = build_email_body(record, imap_config)
-                res = save_draft(
-                    to_address=email_addr,
-                    subject=subject,
-                    body=body,
-                    pdf_bytes=pdf_bytes,
-                    pdf_filename=pdf_filename,
-                    imap_user=imap_config.get("yahoo_user", ""),
-                    imap_password=imap_config.get("yahoo_password", ""),
-                    from_address=imap_config.get("yahoo_user", ""),
-                )
-                results.append({"事業所名": name, "宛先": email_addr, "結果": res["status"]})
+                pdf_data.append({
+                    "事業所名": name,
+                    "email_addr": email_addr,
+                    "record": record,
+                    "pdf_bytes": pdf_bytes,
+                    "pdf_filename": pdf_filename,
+                })
+
+    progress.empty()
+    st.session_state.pdf_zip_bytes = pdf_zip_buf.getvalue()
+    st.session_state.pdf_data = pdf_data
+    st.rerun()
+
+
+def _run_draft_only(pdf_data: list[dict], imap_config: dict) -> None:
+    """保存済みPDFデータをもとにYahoo下書きを一括保存する"""
+    results = []
+    total = len(pdf_data)
+    progress = st.progress(0, text="下書き保存中...")
+
+    for i, item in enumerate(pdf_data):
+        progress.progress((i + 1) / total, text=f"下書き保存中... {i+1}/{total}")
+        name = item["事業所名"]
+        email_addr = item["email_addr"]
+
+        if "⚠️" in email_addr or not email_addr:
+            results.append({"事業所名": name, "宛先": "（未設定）", "結果": "⚠️ メールアドレスなし"})
+            continue
+
+        subject = build_subject(item["record"])
+        body = build_email_body(item["record"], imap_config)
+        res = save_draft(
+            to_address=email_addr,
+            subject=subject,
+            body=body,
+            pdf_bytes=item["pdf_bytes"],
+            pdf_filename=item["pdf_filename"],
+            imap_user=imap_config.get("yahoo_user", ""),
+            imap_password=imap_config.get("yahoo_password", ""),
+            from_address=imap_config.get("yahoo_user", ""),
+        )
+        results.append({"事業所名": name, "宛先": email_addr, "結果": res["status"]})
 
     progress.empty()
     st.session_state.draft_results = results
-    st.session_state.pdf_zip_bytes = pdf_zip_buf.getvalue()
 
 
 def _show_footer():
