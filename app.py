@@ -16,6 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 from excel_reader import read_excel
+from graph_converter import convert_docx_to_pdf_graph
 from mail_drafter import save_draft
 from mail_sender import build_email_body, build_subject
 from word_matcher import build_match_table, convert_docx_to_pdf
@@ -128,6 +129,39 @@ def check_password() -> bool:
             else:
                 st.error("パスワードが違います。もう一度お試しください。")
     return False
+
+
+# ============================================================
+# Microsoft Graph API設定をSecretsから取得
+# ============================================================
+def get_graph_config() -> dict:
+    keys = ["ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_user_email"]
+    config = {}
+    for k in keys:
+        try:
+            val = st.secrets[k]
+        except Exception:
+            val = None
+        if val is None:
+            val = os.environ.get(k.upper(), "")
+        config[k] = str(val) if val else ""
+    return config
+
+
+def pdf_convert(docx_path: Path, output_dir: Path) -> bytes | None:
+    """Graph API優先、未設定ならLibreOfficeにフォールバック"""
+    cfg = get_graph_config()
+    if all(cfg.get(k) for k in ["ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_user_email"]):
+        return convert_docx_to_pdf_graph(
+            docx_path,
+            tenant_id=cfg["ms_tenant_id"],
+            client_id=cfg["ms_client_id"],
+            client_secret=cfg["ms_client_secret"],
+            user_email=cfg["ms_user_email"],
+        )
+    # フォールバック: LibreOffice
+    pdf_path = convert_docx_to_pdf(docx_path, output_dir)
+    return pdf_path.read_bytes() if pdf_path else None
 
 
 # ============================================================
@@ -407,11 +441,10 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                 if matched_path is None:
                     continue
 
-                pdf_path = convert_docx_to_pdf(matched_path, Path(pdf_out_dir))
-                if pdf_path is None:
+                pdf_bytes = pdf_convert(matched_path, Path(pdf_out_dir))
+                if pdf_bytes is None:
                     continue
 
-                pdf_bytes = pdf_path.read_bytes()
                 pdf_filename = f"36協定書_{name}.pdf"
                 pdf_zf.writestr(pdf_filename, pdf_bytes)
 
