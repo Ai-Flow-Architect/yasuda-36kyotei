@@ -1,14 +1,2 @@
-libglib2.0-0t64
-libcairo2
-libpango-1.0-0
-libpangoft2-1.0-0
-libpangocairo-1.0-0
-libgdk-pixbuf-2.0-0
-libffi-dev
-libfontconfig1
-libfreetype6
-libxml2-dev
-libxslt1-dev
-libgirepository-1.0-1
-shared-mime-info
+libreoffice
 fonts-noto-cjk
