@@ -29,9 +29,30 @@ logger = logging.getLogger("yasuda_36kyotei")
 
 IMAP_HOST = "imap.mail.yahoo.co.jp"
 IMAP_PORT = 993
-DRAFT_FOLDER = "Draft"
+DRAFT_FOLDER_CANDIDATES = ["Draft", "Drafts", "下書き", "DRAFT", "DRAFTS"]
 MAX_RETRY = 3
 RETRY_WAIT_SEC = 2
+
+
+def _find_draft_folder(m: imaplib.IMAP4_SSL) -> str:
+    """IMAPフォルダ一覧から下書きフォルダ名を自動検出する。
+    見つからない場合は "Draft" をフォールバックとして返す。
+    """
+    try:
+        typ, folder_list = m.list()
+        if typ != "OK":
+            return DRAFT_FOLDER_CANDIDATES[0]
+        for item in folder_list:
+            decoded = item.decode("utf-7") if isinstance(item, bytes) else str(item)
+            for candidate in DRAFT_FOLDER_CANDIDATES:
+                # フォルダ名はクォートあり・なし両方に対応
+                if f'"{candidate}"' in decoded or decoded.endswith(f" {candidate}"):
+                    logger.debug(f"[フォルダ検出] 下書き候補: {candidate} (行: {decoded})")
+                    return candidate
+    except Exception as e:
+        logger.warning(f"[フォルダ一覧取得失敗] {e}")
+    logger.warning(f"[フォルダ未検出] 候補 {DRAFT_FOLDER_CANDIDATES} が見つからず 'Draft' を使用")
+    return DRAFT_FOLDER_CANDIDATES[0]
 
 
 def _rfc2047_b_encode(text: str) -> str:
@@ -196,15 +217,17 @@ def save_draft(
         try:
             with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=30) as m:
                 m.login(imap_user, imap_password)
+                draft_folder = _find_draft_folder(m)
+                logger.info(f"[下書きフォルダ] 使用フォルダ: {draft_folder}")
                 internal_date = imaplib.Time2Internaldate(datetime.now(timezone.utc))
                 typ, data = m.append(
-                    DRAFT_FOLDER,
+                    draft_folder,
                     r"\Draft",
                     internal_date,
                     raw_message,
                 )
                 if typ != "OK":
-                    raise imaplib.IMAP4.error(f"APPEND returned {typ}: {data}")
+                    raise imaplib.IMAP4.error(f"APPEND returned {typ}: {data} (folder={draft_folder})")
             result["status"] = "下書き保存成功"
             logger.info(f"[下書き保存成功] To: {to_address} | attempts={attempt}")
             return result
