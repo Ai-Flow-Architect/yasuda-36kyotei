@@ -18,7 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from excel_reader import read_excel
 from graph_converter import convert_docx_to_pdf_graph
 from mail_drafter import save_draft
-from mail_sender import build_email_body, build_subject
+from mail_sender import (
+    build_email_body, build_subject,
+    FEE_TYPE_STANDARD, FEE_TYPE_ANNUAL_CALENDAR,
+)
 from word_matcher import build_match_table, convert_docx_to_pdf
 
 # ============================================================
@@ -206,9 +209,10 @@ def main() -> None:
         "last_excel_name": "",
         "last_word_names": [],
         "pdf_zip_bytes": None,
-        "pdf_data": [],        # PDF変換済みデータ（Yahoo下書き用）
+        "pdf_data": [],
         "draft_results": [],
         "_word_tmp_dir": "",
+        "fee_type": FEE_TYPE_STANDARD,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -393,6 +397,19 @@ def main() -> None:
             return
 
         st.info(f"📤 差出人アカウント: **{imap_config.get('yahoo_user', '')}**")
+
+        # メール金額タイプ選択
+        st.markdown("**代行手数料の種別を選択してください**")
+        fee_label = st.radio(
+            "代行手数料",
+            options=["5,000円（通常）", "12,000円（年間カレンダーあり）"],
+            index=0 if st.session_state.fee_type == FEE_TYPE_STANDARD else 1,
+            label_visibility="collapsed",
+        )
+        st.session_state.fee_type = (
+            FEE_TYPE_STANDARD if "5,000" in fee_label else FEE_TYPE_ANNUAL_CALENDAR
+        )
+
         confirmed = st.checkbox("PDFの内容を確認しました。Yahoo メールの下書きに保存します。")
 
         if confirmed:
@@ -401,7 +418,11 @@ def main() -> None:
                 type="primary",
                 use_container_width=True,
             ):
-                _run_draft_only(st.session_state.pdf_data, imap_config)
+                _run_draft_only(
+                    st.session_state.pdf_data,
+                    imap_config,
+                    fee_type=st.session_state.fee_type,
+                )
 
         # 下書き保存結果
         if st.session_state.draft_results:
@@ -462,7 +483,11 @@ def _run_pdf_only(match_table: list[dict]) -> None:
     st.rerun()
 
 
-def _run_draft_only(pdf_data: list[dict], imap_config: dict) -> None:
+def _run_draft_only(
+    pdf_data: list[dict],
+    imap_config: dict,
+    fee_type: str = FEE_TYPE_STANDARD,
+) -> None:
     """保存済みPDFデータをもとにYahoo下書きを一括保存する"""
     results = []
     total = len(pdf_data)
@@ -478,7 +503,7 @@ def _run_draft_only(pdf_data: list[dict], imap_config: dict) -> None:
             continue
 
         subject = build_subject(item["record"])
-        body = build_email_body(item["record"], imap_config)
+        body = build_email_body(item["record"], imap_config, fee_type=fee_type)
         res = save_draft(
             to_address=email_addr,
             subject=subject,
