@@ -1,6 +1,6 @@
 """
 メール送信モジュール
-36協定書をOutlook/SMTP経由で送信する（定型文1種類）
+36協定書をOutlook/SMTP経由で送信する
 リトライ機能付き（最大3回、間隔5秒）
 """
 import logging
@@ -14,31 +14,61 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
-# モジュール共通ロガー
 logger = logging.getLogger("yasuda_36kyotei")
 
-# SMTP送信リトライ設定
 MAX_RETRIES: int = 3
 RETRY_INTERVAL_SEC: int = 5
 
-# デフォルト定型文
-DEFAULT_TEMPLATE: str = """
-{宛先名} 様
+MAIL_SUBJECT: str = "36協定の更新について"
+
+# 標準テンプレート（作成提出代行手数料: 5,000円）
+MAIL_TEMPLATE_STANDARD: str = """{宛先会社名}
+{宛先担当者名} 様
 
 お世話になっております。
-{事業主名}の36協定届（時間外労働及び休日労働に関する協定書）を送付いたします。
+36協定の更新時期が近付いてまいりましたのでご連絡申し上げます。
+添付しております協定書をご確認いただき、下記についてご記入いただけますようお願い申し上げます。
 
-添付ファイルをご確認いただき、内容に問題がなければご署名をお願いいたします。
-ご不明な点がございましたら、お気軽にお問い合わせください。
+①人数
+②日付(書類記入日)
+③労働代表者様の職名(職務)およびご署名(直筆)
 
-何卒よろしくお願い申し上げます。
+ご記入いただきましたら、メール添付またはＦＡＸにてご返信いただけますでしょうか。
+お忙しいところ恐縮ですが{締切月}月15日までにお送りいただければ幸いです。
 
-──────────────────
-{差出人名}
-{差出人所属}
-TEL: {差出人電話}
-──────────────────
-""".strip()
+尚、作成提出代行手数料といたしまして1事業所5,000円でのお手続きとさせていただいております。予めご了承いただけますようお願いいたします。
+
+ご不明な点や修正箇所等がございましたらご連絡くださいませ。
+どうぞよろしくお願いいたします。
+
+
+{差出人名}"""
+
+# 年間カレンダーあり（作成提出代行手数料: 12,000円）
+MAIL_TEMPLATE_ANNUAL_CALENDAR: str = """{宛先会社名}
+{宛先担当者名} 様
+
+お世話になっております。
+36協定の更新時期が近付いてまいりましたのでご連絡申し上げます。
+添付しております協定書をご確認いただき、下記についてご記入いただけますようお願い申し上げます。
+
+①人数
+②日付(書類記入日)
+③労働代表者様の職名(職務)およびご署名(直筆)
+
+ご記入いただきましたら、年間カレンダーと合わせてメール添付またはＦＡＸにてご返信いただけますでしょうか。
+お忙しいところ恐縮ですが{締切月}月15日までにお送りいただければ幸いです。
+
+尚、作成提出代行手数料といたしまして1事業所12,000円でのお手続きとさせていただいております。予めご了承いただけますようお願いいたします。
+
+ご不明な点や修正箇所等がございましたらご連絡くださいませ。
+どうぞよろしくお願いいたします。
+
+
+{差出人名}"""
+
+FEE_TYPE_STANDARD = "standard"
+FEE_TYPE_ANNUAL_CALENDAR = "annual_calendar"
 
 
 def create_email(
@@ -56,7 +86,6 @@ def create_email(
 
     msg.attach(MIMEText(body, "plain", "utf-8"))
 
-    # 添付ファイル
     if attachment_path and Path(attachment_path).exists():
         with open(attachment_path, "rb") as f:
             part = MIMEBase("application", "octet-stream")
@@ -78,19 +107,7 @@ def send_email(
     password: str = "",
     dry_run: bool = True,
 ) -> dict[str, str]:
-    """メールを送信する（リトライ機能付き: 最大3回、間隔5秒）
-
-    Args:
-        msg: 送信するMIMEメッセージ
-        smtp_server: SMTPサーバーアドレス
-        smtp_port: SMTPポート番号
-        username: SMTP認証ユーザー名
-        password: SMTP認証パスワード
-        dry_run: Trueの場合、実際には送信せずログだけ出力する（デモ用）
-
-    Returns:
-        送信結果を含む辞書
-    """
+    """メールを送信する（リトライ機能付き: 最大3回、間隔5秒）"""
     result: dict[str, str] = {
         "to": msg["To"],
         "subject": msg["Subject"],
@@ -102,7 +119,6 @@ def send_email(
         logger.info(f"[DRY_RUN] To: {msg['To']} | Subject: {msg['Subject']}")
         return result
 
-    # リトライループ（最大MAX_RETRIES回）
     last_error: Optional[Exception] = None
     for attempt in range(1, MAX_RETRIES + 1):
         try:
@@ -118,47 +134,59 @@ def send_email(
             return result
         except Exception as e:
             last_error = e
-            logger.warning(
-                f"[送信失敗 {attempt}/{MAX_RETRIES}] To: {msg['To']} | Error: {e}"
-            )
+            logger.warning(f"[送信失敗 {attempt}/{MAX_RETRIES}] To: {msg['To']} | Error: {e}")
             if attempt < MAX_RETRIES:
-                logger.info(f"  {RETRY_INTERVAL_SEC}秒後にリトライします...")
                 time.sleep(RETRY_INTERVAL_SEC)
 
-    # 全リトライ失敗
     result["status"] = f"送信失敗（{MAX_RETRIES}回リトライ後）: {str(last_error)}"
     logger.error(f"[送信失敗（リトライ上限）] To: {msg['To']} | Error: {last_error}")
     return result
 
 
-def build_email_body(data: dict[str, str], config: dict[str, str]) -> str:
-    """定型文にデータを埋め込む"""
-    template: str = config.get("メールテンプレート", DEFAULT_TEMPLATE)
+def build_email_body(
+    data: dict[str, str],
+    config: dict[str, str],
+    fee_type: str = FEE_TYPE_STANDARD,
+) -> str:
+    """定型文にデータを埋め込む
+
+    Args:
+        data: Excelレコード（事業所名、事業主名 等）
+        config: 設定（差出人名、締切月 等）
+        fee_type: "standard"（5,000円）または "annual_calendar"（12,000円 + 年間カレンダー）
+    """
+    if fee_type == FEE_TYPE_ANNUAL_CALENDAR:
+        template = MAIL_TEMPLATE_ANNUAL_CALENDAR
+    else:
+        template = MAIL_TEMPLATE_STANDARD
+
+    締切月 = config.get("締切月", "")
+    if not 締切月:
+        # 更新月から1ヶ月前を締切月として自動算出（フォールバック）
+        try:
+            更新月 = int(data.get("更新月", "0") or "0")
+            締切月 = str(更新月 - 1 if 更新月 > 1 else 12)
+        except (ValueError, TypeError):
+            締切月 = "○"
+
     return template.format(
-        宛先名=data.get("事業主名", "ご担当者"),
-        事業主名=data.get("事業所名", ""),
-        差出人名=config.get("差出人名", ""),
-        差出人所属=config.get("差出人所属", ""),
-        差出人電話=config.get("差出人電話", ""),
+        宛先会社名=data.get("事業所名", ""),
+        宛先担当者名=data.get("事業主名", "ご担当者"),
+        締切月=締切月,
+        差出人名=config.get("差出人名", "飯塚"),
     )
 
 
 def build_subject(data: dict[str, str]) -> str:
     """メール件名を生成"""
-    事業所名: str = data.get("事業所名", "")
-    return f"【36協定届】{事業所名}様 時間外労働及び休日労働に関する協定書"
+    return MAIL_SUBJECT
 
 
 if __name__ == "__main__":
-    # テスト
-    config: dict[str, str] = {
-        "差出人名": "安田",
-        "差出人所属": "朝日事務所",
-        "差出人電話": "03-0000-0000",
-    }
-    data: dict[str, str] = {"事業主名": "テスト太郎", "事業所名": "テスト株式会社"}
+    config: dict[str, str] = {"差出人名": "飯塚", "締切月": "3"}
+    data: dict[str, str] = {"事業主名": "テスト太郎", "事業所名": "テスト株式会社", "更新月": "4"}
 
-    body: str = build_email_body(data, config)
-    subject: str = build_subject(data)
-    print(f"件名: {subject}")
-    print(f"本文:\n{body}")
+    print("=== 標準（5,000円）===")
+    print(build_email_body(data, config, FEE_TYPE_STANDARD))
+    print("\n=== 年間カレンダーあり（12,000円）===")
+    print(build_email_body(data, config, FEE_TYPE_ANNUAL_CALENDAR))
