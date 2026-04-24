@@ -146,11 +146,14 @@ def read_excel(file_path: str) -> list[dict[str, str]]:
             record[key] = str(cell_value).strip() if cell_value is not None else ""
 
         # メールアドレス（AR列）、なければF列（6列目）のフォールバック
+        # F列は電話番号列として定義されているため、@を含む場合のみメールとして扱う
         email_val = ws.cell(row=row_num, column=EMAIL_COLUMN).value
         email_str = str(email_val).strip() if email_val else ""
         if not email_str and ws.max_column >= 6:
             f_val = ws.cell(row=row_num, column=6).value
-            email_str = str(f_val).strip() if f_val else ""
+            f_str = str(f_val).strip() if f_val else ""
+            if "@" in f_str:
+                email_str = f_str
         record["メールアドレス"] = email_str
 
         # 案内文（I列=9列目: 飯塚様の回収シートのメール本文）
