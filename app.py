@@ -212,7 +212,6 @@ def main() -> None:
         "pdf_data": [],
         "draft_results": [],
         "_word_tmp_dir": "",
-        "fee_type": FEE_TYPE_STANDARD,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -398,16 +397,9 @@ def main() -> None:
 
         st.info(f"📤 差出人アカウント: **{imap_config.get('yahoo_user', '')}**")
 
-        # メール金額タイプ選択
-        st.markdown("**代行手数料の種別を選択してください**")
-        fee_label = st.radio(
-            "代行手数料",
-            options=["5,000円（通常）", "12,000円（年間カレンダーあり）"],
-            index=0 if st.session_state.fee_type == FEE_TYPE_STANDARD else 1,
-            label_visibility="collapsed",
-        )
-        st.session_state.fee_type = (
-            FEE_TYPE_STANDARD if "5,000" in fee_label else FEE_TYPE_ANNUAL_CALENDAR
+        st.info(
+            "代行手数料はWordファイル名から自動判定します。\n"
+            "「36協定及び1年変形」を含むファイル → 12,000円版、それ以外 → 5,000円版"
         )
 
         confirmed = st.checkbox("PDFの内容を確認しました。Yahoo メールの下書きに保存します。")
@@ -418,11 +410,7 @@ def main() -> None:
                 type="primary",
                 use_container_width=True,
             ):
-                _run_draft_only(
-                    st.session_state.pdf_data,
-                    imap_config,
-                    fee_type=st.session_state.fee_type,
-                )
+                _run_draft_only(st.session_state.pdf_data, imap_config)
 
         # 下書き保存結果
         if st.session_state.draft_results:
@@ -475,6 +463,7 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                     "record": record,
                     "pdf_bytes": pdf_bytes,
                     "pdf_filename": pdf_filename,
+                    "word_filename": matched_path.name,
                 })
 
     progress.empty()
@@ -483,11 +472,7 @@ def _run_pdf_only(match_table: list[dict]) -> None:
     st.rerun()
 
 
-def _run_draft_only(
-    pdf_data: list[dict],
-    imap_config: dict,
-    fee_type: str = FEE_TYPE_STANDARD,
-) -> None:
+def _run_draft_only(pdf_data: list[dict], imap_config: dict) -> None:
     """保存済みPDFデータをもとにYahoo下書きを一括保存する"""
     results = []
     total = len(pdf_data)
@@ -502,8 +487,12 @@ def _run_draft_only(
             results.append({"事業所名": name, "宛先": "（未設定）", "結果": "⚠️ メールアドレスなし"})
             continue
 
+        # Wordファイル名から代行手数料タイプを自動判定
+        word_filename = item.get("word_filename", "")
+        auto_fee = FEE_TYPE_ANNUAL_CALENDAR if "36協定及び1年変形" in word_filename else FEE_TYPE_STANDARD
+
         subject = build_subject(item["record"])
-        body = build_email_body(item["record"], imap_config, fee_type=fee_type)
+        body = build_email_body(item["record"], imap_config, fee_type=auto_fee)
         res = save_draft(
             to_address=email_addr,
             subject=subject,
