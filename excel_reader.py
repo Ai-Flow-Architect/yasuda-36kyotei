@@ -145,9 +145,17 @@ def read_excel(file_path: str) -> list[dict[str, str]]:
             cell_value = ws.cell(row=row_num, column=col).value
             record[key] = str(cell_value).strip() if cell_value is not None else ""
 
-        # メールアドレス（AR列）
+        # メールアドレス（AR列）、なければF列（6列目）のフォールバック
         email_val = ws.cell(row=row_num, column=EMAIL_COLUMN).value
-        record["メールアドレス"] = str(email_val).strip() if email_val else ""
+        email_str = str(email_val).strip() if email_val else ""
+        if not email_str and ws.max_column >= 6:
+            f_val = ws.cell(row=row_num, column=6).value
+            email_str = str(f_val).strip() if f_val else ""
+        record["メールアドレス"] = email_str
+
+        # 案内文（I列=9列目: 飯塚様の回収シートのメール本文）
+        案内_val = ws.cell(row=row_num, column=9).value
+        record["案内文"] = str(案内_val).strip() if 案内_val else ""
 
         # 様式パターン手動上書き（AS列）: 10/10_2 など自動判定外を明示指定
         override_val = ws.cell(row=row_num, column=FORM_PATTERN_OVERRIDE_COLUMN).value
