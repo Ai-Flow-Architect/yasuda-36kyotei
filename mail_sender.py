@@ -42,7 +42,7 @@ MAIL_TEMPLATE_STANDARD: str = """{宛先会社名}
 どうぞよろしくお願いいたします。
 
 
-{差出人名}"""
+{担当者名}"""
 
 # 年間カレンダーあり（作成提出代行手数料: 12,000円）
 MAIL_TEMPLATE_ANNUAL_CALENDAR: str = """{宛先会社名}
@@ -65,7 +65,7 @@ MAIL_TEMPLATE_ANNUAL_CALENDAR: str = """{宛先会社名}
 どうぞよろしくお願いいたします。
 
 
-{差出人名}"""
+{担当者名}"""
 
 FEE_TYPE_STANDARD = "standard"
 FEE_TYPE_ANNUAL_CALENDAR = "annual_calendar"
@@ -173,11 +173,12 @@ def build_email_body(
         except (ValueError, TypeError):
             締切月 = "○"
 
+    担当者名 = config.get("担当者名") or config.get("差出人名", "飯塚")
     return template.format(
         宛先会社名=data.get("事業所名", ""),
         宛先担当者名=data.get("事業主名", "ご担当者"),
         締切月=締切月,
-        差出人名=config.get("差出人名", "飯塚"),
+        担当者名=担当者名,
     )
 
 

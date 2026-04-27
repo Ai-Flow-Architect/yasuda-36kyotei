@@ -5,27 +5,24 @@ word_matcher.py — 事業所名 × Word ファイル名マッチング
 import re
 import subprocess
 import tempfile
+import unicodedata
 from pathlib import Path
 
 
 def _normalize(name: str) -> str:
-    """会社名を正規化（法人格・記号・スペース・全角半角除去）"""
-    # 全角英数字→半角
-    normalized = name.translate(str.maketrans(
-        'ａｂｃｄｅｆｇｈｉｊｋｌｍｎｏ'
-        'ｐｑｒｓｔｕｖｗｘｙｚ'
-        'ＡＢＣＤＥＦＧＨＩＪＫＬＭＮＯ'
-        'ＰＱＲＳＴＵＶＷＸＹＺ'
-        '０１２３４５６７８９',
-        'abcdefghijklmnopqrstuvwxyz'
-        'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        '0123456789'
-    ))
+    """会社名を正規化（NFKC正規化 + 法人格・記号・スペース除去）
+
+    unicodedata.normalize('NFKC') により:
+    - 全角英数字 → 半角英数字
+    - 半角カタカナ → 全角カタカナ
+    全角スペース・記号・法人格サフィックスを除去後にlowercaseで統一する。
+    """
+    normalized = unicodedata.normalize('NFKC', str(name))
     return re.sub(
-        r'[\s　　株式会社有限会社合同会社'
+        r'[\s　株式会社有限会社合同会社'
         r'一般社団法人医療法人（）()【】'
         r'「」・]',
-        '', str(normalized)
+        '', normalized
     ).lower()
 
 
