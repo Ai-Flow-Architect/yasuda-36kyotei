@@ -86,15 +86,17 @@ def build_match_table(
     records: list[dict],
     word_paths: list[Path],
 ) -> list[dict]:
-    """Excelレコード × Word ファイルのマッチング結果を返す"""
+    """Excelレコード × 協定書ファイル（Word/PDF）のマッチング結果を返す"""
     results = []
     for rec in records:
         name = rec.get("事業所名") or ""
         matched = match_word_files(name, word_paths)
+        suffix = matched.suffix.upper().lstrip(".") if matched else ""
         results.append({
             "事業所名": name,
             "送信先メール": rec.get("メールアドレス") or "⚠️ 未設定",
-            "Wordファイル": matched.name if matched else "❌ 未マッチ",
+            "協定書ファイル": matched.name if matched else "❌ 未マッチ",
+            "形式": suffix if matched else "-",
             "_matched_path": matched,
             "_record": rec,
         })
