@@ -297,6 +297,36 @@ python3 compare_with_originals.py
   - 2025年8月以降、Yahoo!は **対応期日後にシステム側で自動的に「海外からのアクセス制限=有効」に変更** していく方針なので、過去動いていた連携が突然動かなくなる事象も発生する。デプロイ後に動かなくなったら最初にこの設定を疑う
   - Gmail は逆に「アプリパスワード」必須（2段階認証ON前提）。**メールサービスごとの認証ポリシーは全部違うので、ヒヤリング時に必ず確認する**
 
+### BUG-DEPLOY-002: Streamlit Cloud が古いテンプレートを使い続ける → ブランチ不一致が原因
+
+- **症状**: コードを修正・push して Reboot しても、メール本文・件名が全く変わらない。古いフォーマット（旧 `DEFAULT_TEMPLATE`）が使われ続ける
+- **原因**: Streamlit Cloud は `master` ブランチをデプロイ対象に設定されていたが、開発作業はすべて `main` ブランチで行っていた。5コミット分の修正が `main` にのみ存在し、`master` には届いていなかった
+  ```
+  origin/master (Streamlit Cloudが見ているブランチ): 旧コード
+  origin/main   (開発していたブランチ):              全修正済み
+  ```
+- **発覚タイミング**: Reboot 後にテスト → 旧テンプレートの件名「【36協定届】C株式会社様 時間外労働及び休日労働に関する協定書」が表示され、メール本文もまったく別形式
+- **診断方法**:
+  ```bash
+  git log --oneline --graph origin/main origin/master | head -20
+  # 2本の平行ラインが表示されたらブランチ分岐している → 危険
+  ```
+- **修正**: `main` の修正を `master` にマージして push
+  ```bash
+  git merge origin/master --no-edit  # masterにしかないcommitを取り込む
+  git push origin main:master        # mainの内容をmasterに反映
+  ```
+- **発見日**: 2026-04-27
+- **ファイル**: GitHub リポジトリ / Streamlit Cloud 設定
+- **NEVER REPEAT**:
+  - **開発開始前に必ず確認**: `git log --oneline --graph origin/main origin/master` でブランチが一致しているか見る
+  - **push 後に必ず確認**: `git log --oneline origin/master -3` でコミットが届いているか確認してから Reboot する
+  - Reboot はブランチ問題を解決しない。同じコードを再起動するだけ
+  - Streamlit Cloud の「App settings → Repository」で追跡ブランチを確認する（main か master か）
+  - 新規案件の開発は Streamlit Cloud が追跡するブランチと同じブランチで行う
+
+---
+
 ### BUG-DEPLOY-001: Streamlit Cloud Secrets で日本語キーが "Invalid format: please enter valid TOML." エラー
 - **症状**: Streamlit Cloud の Advanced settings → Secrets に下記を貼ると弾かれる
   ```toml
