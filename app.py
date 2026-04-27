@@ -171,7 +171,7 @@ def pdf_convert(docx_path: Path, output_dir: Path) -> bytes | None:
 # Yahoo IMAP設定をSecretsから取得
 # ============================================================
 def get_imap_config() -> dict:
-    keys = ["yahoo_user", "yahoo_password", "差出人名", "差出人所属", "差出人電話"]
+    keys = ["yahoo_user", "yahoo_password", "差出人名", "差出人所属", "差出人電話", "担当者名"]
     config = {}
     for k in keys:
         try:
@@ -253,7 +253,12 @@ def main() -> None:
             tmp.write(uploaded_excel.read())
             tmp_path = tmp.name
         try:
-            st.session_state.records = read_excel(tmp_path)
+            excel_records, excel_warnings = read_excel(tmp_path)
+            st.session_state.records = excel_records
+            if excel_warnings:
+                with st.expander(f"⚠️ 入力データの警告 {len(excel_warnings)} 件"):
+                    for w in excel_warnings:
+                        st.warning(w)
         except Exception as e:
             st.markdown(
                 f'<div class="error-card">❌ Excelの読み取りに失敗しました。<br><small>{e}</small></div>',
@@ -401,6 +406,21 @@ def main() -> None:
             "代行手数料はWordファイル名から自動判定します。\n"
             "「36協定及び1年変形」を含むファイル → 12,000円版、それ以外 → 5,000円版"
         )
+
+        # 締切月入力（メール本文の「〇月15日」を設定）
+        first_record = st.session_state.pdf_data[0].get("record", {}) if st.session_state.pdf_data else {}
+        try:
+            default_締切月 = str(int(first_record.get("更新月", "0") or "0") - 1)
+            if default_締切月 == "0":
+                default_締切月 = "12"
+        except (ValueError, TypeError):
+            default_締切月 = ""
+        締切月 = st.text_input(
+            "締切月（例: 4 と入力すると「4月15日まで」とメールに記載されます）",
+            value=default_締切月,
+            key="締切月_input",
+        )
+        imap_config["締切月"] = 締切月
 
         confirmed = st.checkbox("PDFの内容を確認しました。Yahoo メールの下書きに保存します。")
 
