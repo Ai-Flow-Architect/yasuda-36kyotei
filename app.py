@@ -151,20 +151,25 @@ def get_graph_config() -> dict:
     return config
 
 
-def pdf_convert(docx_path: Path, output_dir: Path) -> bytes | None:
-    """Graph API優先、未設定ならLibreOfficeにフォールバック"""
+def pdf_convert(docx_path: Path, output_dir: Path) -> tuple[bytes | None, str]:
+    """Graph API優先、未設定ならLibreOfficeにフォールバック。
+
+    Returns:
+        (pdf_bytes, error_msg): 成功時は (bytes, "")、失敗時は (None, エラーメッセージ)
+    """
     cfg = get_graph_config()
     if all(cfg.get(k) for k in ["ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_user_email"]):
-        return convert_docx_to_pdf_graph(
+        pdf_bytes = convert_docx_to_pdf_graph(
             docx_path,
             tenant_id=cfg["ms_tenant_id"],
             client_id=cfg["ms_client_id"],
             client_secret=cfg["ms_client_secret"],
             user_email=cfg["ms_user_email"],
         )
+        return (pdf_bytes, "") if pdf_bytes else (None, "Graph API変換失敗")
     # フォールバック: LibreOffice
-    pdf_path = convert_docx_to_pdf(docx_path, output_dir)
-    return pdf_path.read_bytes() if pdf_path else None
+    pdf_path, err = convert_docx_to_pdf(docx_path, output_dir)
+    return (pdf_path.read_bytes() if pdf_path else None), err
 
 
 # ============================================================
@@ -455,6 +460,7 @@ def _run_pdf_only(match_table: list[dict]) -> None:
     """Word→PDF変換のみ実行し、ZIPとpdf_dataをsession_stateに保存する"""
     pdf_zip_buf = io.BytesIO()
     pdf_data = []
+    convert_errors = []
     total = len(match_table)
     progress = st.progress(0, text="PDF変換中...")
 
@@ -468,10 +474,12 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                 record: dict = row["_record"]
 
                 if matched_path is None:
+                    convert_errors.append(f"{name}: Wordファイル未マッチ")
                     continue
 
-                pdf_bytes = pdf_convert(matched_path, Path(pdf_out_dir))
+                pdf_bytes, pdf_err = pdf_convert(matched_path, Path(pdf_out_dir))
                 if pdf_bytes is None:
+                    convert_errors.append(f"{name}: {pdf_err}")
                     continue
 
                 pdf_filename = f"36協定書_{name}.pdf"
@@ -487,6 +495,12 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                 })
 
     progress.empty()
+
+    if convert_errors:
+        with st.expander(f"⚠️ PDF変換エラー {len(convert_errors)} 件", expanded=True):
+            for err in convert_errors:
+                st.error(err)
+
     st.session_state.pdf_zip_bytes = pdf_zip_buf.getvalue()
     st.session_state.pdf_data = pdf_data
     st.rerun()
