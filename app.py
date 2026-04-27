@@ -302,24 +302,29 @@ def main() -> None:
     st.dataframe(preview_rows, use_container_width=True, hide_index=True)
 
     # --------------------------------------------------------
-    # STEP 3: Word アップロード → PDF変換 → 飯塚様確認
+    # STEP 3: Word または PDF アップロード → 確認
     # --------------------------------------------------------
     st.markdown("""
     <div class="step-box">
         <div class="step-label">STEP 3</div>
-        <div class="step-title">📄 Wordをアップロードして、PDFに変換・内容を確認</div>
+        <div class="step-title">📄 協定書ファイルをアップロード（Word または PDF）</div>
     </div>
     """, unsafe_allow_html=True)
 
+    st.info(
+        "**PDF推奨**: WordファイルをWindowsのWordで「名前を付けて保存 → PDF」してからアップロードすると品質100%になります。\n"
+        "WordのままアップロードするとLinux上でPDF変換されるため、フォント置換によりレイアウトがずれる場合があります。"
+    )
+
     uploaded_words = st.file_uploader(
-        "完成済み36協定書のWordファイル（.docx）を選択（複数可）",
-        type=["docx", "doc"],
+        "完成済み36協定書（.pdf / .docx / .doc）を選択（複数可）",
+        type=["pdf", "docx", "doc"],
         accept_multiple_files=True,
         label_visibility="collapsed",
     )
 
     if not uploaded_words:
-        st.info("👆 Wordファイルを選択するとマッチング結果が表示されます。")
+        st.info("👆 ファイルを選択するとマッチング結果が表示されます。")
         _show_footer()
         return
 
@@ -351,7 +356,8 @@ def main() -> None:
         {
             "事業所名": row["事業所名"],
             "送信先メール": row["送信先メール"],
-            "Wordファイル": row["Wordファイル"],
+            "協定書ファイル": row["協定書ファイル"],
+            "形式": row["形式"],
         }
         for row in match_table
     ]
@@ -371,14 +377,21 @@ def main() -> None:
         f"メール未設定: **{no_email_count}** 件"
     )
 
-    # PDF変換ボタン
+    # PDF準備ボタン（PDF直接アップロードの場合は「変換」ではなく「読み込み」）
+    pdf_count = sum(1 for r in match_table if r["_matched_path"] and r["_matched_path"].suffix.lower() == ".pdf")
+    word_count = matched_count - pdf_count
     if not st.session_state.pdf_zip_bytes:
-        if st.button("📄 PDFを一括生成する", type="primary", use_container_width=True):
+        btn_label = "📄 PDFを準備する"
+        if pdf_count > 0 and word_count == 0:
+            btn_label = f"📄 PDF {pdf_count}件を読み込む（変換なし）"
+        elif pdf_count > 0:
+            btn_label = f"📄 PDF {pdf_count}件を読み込む ＋ Word {word_count}件を変換する"
+        if st.button(btn_label, type="primary", use_container_width=True):
             _run_pdf_only(match_table)
 
     # PDF生成済み → ダウンロード + 確認チェック
     if st.session_state.pdf_zip_bytes:
-        st.success(f"✅ **{len(st.session_state.pdf_data)} 件** のPDFを生成しました。")
+        st.success(f"✅ **{len(st.session_state.pdf_data)} 件** のPDFを準備しました。")
         st.download_button(
             label="📥 PDF ZIP をダウンロードして内容を確認する",
             data=st.session_state.pdf_zip_bytes,
@@ -474,10 +487,15 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                 record: dict = row["_record"]
 
                 if matched_path is None:
-                    convert_errors.append(f"{name}: Wordファイル未マッチ")
+                    convert_errors.append(f"{name}: ファイル未マッチ")
                     continue
 
-                pdf_bytes, pdf_err = pdf_convert(matched_path, Path(pdf_out_dir))
+                # PDF直接アップロードの場合は変換スキップ
+                if matched_path.suffix.lower() == ".pdf":
+                    pdf_bytes = matched_path.read_bytes()
+                    pdf_err = ""
+                else:
+                    pdf_bytes, pdf_err = pdf_convert(matched_path, Path(pdf_out_dir))
                 if pdf_bytes is None:
                     convert_errors.append(f"{name}: {pdf_err}")
                     continue
