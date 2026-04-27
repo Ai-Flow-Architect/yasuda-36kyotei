@@ -16,7 +16,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
 from excel_reader import read_excel
-from graph_converter import convert_docx_to_pdf_graph
+from graph_converter import convert_docx_to_pdf_graph, convert_docx_to_pdf_graph_personal
 from mail_drafter import save_draft
 from mail_sender import (
     build_email_body, build_subject,
@@ -138,7 +138,7 @@ def check_password() -> bool:
 # Microsoft Graph API設定をSecretsから取得
 # ============================================================
 def get_graph_config() -> dict:
-    keys = ["ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_user_email"]
+    keys = ["ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_user_email", "ms_refresh_token"]
     config = {}
     for k in keys:
         try:
@@ -154,19 +154,35 @@ def get_graph_config() -> dict:
 def pdf_convert(docx_path: Path, output_dir: Path) -> tuple[bytes | None, str]:
     """Graph API優先、未設定ならLibreOfficeにフォールバック。
 
+    認証モード優先順位:
+      1. 個人Microsoftアカウント: ms_client_id + ms_refresh_token（ms_client_secretなし）
+      2. M365 Business: ms_tenant_id + ms_client_id + ms_client_secret + ms_user_email
+      3. LibreOffice（フォールバック）
+
     Returns:
         (pdf_bytes, error_msg): 成功時は (bytes, "")、失敗時は (None, エラーメッセージ)
     """
     cfg = get_graph_config()
+
+    # 個人アカウントモード（リフレッシュトークン）
+    if cfg.get("ms_client_id") and cfg.get("ms_refresh_token"):
+        return convert_docx_to_pdf_graph_personal(
+            docx_path,
+            client_id=cfg["ms_client_id"],
+            refresh_token=cfg["ms_refresh_token"],
+            user_email=cfg.get("ms_user_email", ""),
+        )
+
+    # M365 Businessモード（client_credentials）
     if all(cfg.get(k) for k in ["ms_tenant_id", "ms_client_id", "ms_client_secret", "ms_user_email"]):
-        pdf_bytes = convert_docx_to_pdf_graph(
+        return convert_docx_to_pdf_graph(
             docx_path,
             tenant_id=cfg["ms_tenant_id"],
             client_id=cfg["ms_client_id"],
             client_secret=cfg["ms_client_secret"],
             user_email=cfg["ms_user_email"],
         )
-        return (pdf_bytes, "") if pdf_bytes else (None, "Graph API変換失敗")
+
     # フォールバック: LibreOffice
     pdf_path, err = convert_docx_to_pdf(docx_path, output_dir)
     return (pdf_path.read_bytes() if pdf_path else None), err
