@@ -118,14 +118,14 @@ FORM_TYPE_RULES: list[tuple[Any, str]] = [
 DEFAULT_FORM_TYPE: str = "9"
 
 
-def read_excel(file_path: str) -> list[dict[str, str]]:
+def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
     """Excelファイルから全行のデータを読み取る
 
     Args:
         file_path: Excelファイルのパス
 
     Returns:
-        レコード辞書のリスト
+        (レコード辞書のリスト, 警告メッセージのリスト)
     """
     logger.info("Excel読み取り開始: %s", file_path)
     wb: Workbook = openpyxl.load_workbook(file_path, data_only=True)
@@ -189,7 +189,7 @@ def read_excel(file_path: str) -> list[dict[str, str]]:
             logger.warning("  %s", w)
 
     logger.info("Excel読み取り完了: %d件", len(records))
-    return records
+    return records, warnings
 
 
 def validate_record(record: dict[str, str], row_num: int) -> list[str]:
