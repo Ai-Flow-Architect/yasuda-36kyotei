@@ -158,10 +158,6 @@ def build_email_body(
     if fee_type == FEE_TYPE_ANNUAL_CALENDAR:
         template = MAIL_TEMPLATE_ANNUAL_CALENDAR
     else:
-        # Excelの案内文（I列）がある場合はそのままメール本文として使用
-        案内文 = data.get("案内文", "")
-        if 案内文:
-            return 案内文
         template = MAIL_TEMPLATE_STANDARD
 
     締切月 = config.get("締切月", "")
