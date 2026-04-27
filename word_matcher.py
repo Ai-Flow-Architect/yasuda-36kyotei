@@ -1,6 +1,8 @@
 """
 word_matcher.py — 事業所名 × Word ファイル名マッチング
-命名規則: 0001_36協定書_事業所名.docx（先頭番号_任意テキスト_事業所名）
+命名規則（2種類対応）:
+  旧形式: 0001_36協定書_事業所名.docx （先頭が数字）
+  新形式: 36協定書_事業所名_様式第9号.docx （先頭が文字列）
 """
 import re
 import subprocess
@@ -28,13 +30,16 @@ def _normalize(name: str) -> str:
 
 def _extract_company_from_filename(stem: str) -> str | None:
     """ファイル名ステム（拡張子なし）から事業所名部分を抽出する。
-    命名規則: 0001_36協定書_事業所名 → 事業所名 を返す
-    アンダースコアで3分割し、3番目を事業所名とみなす。
+
+    旧形式: 0001_36協定書_事業所名 → parts[0]が数字 → parts[2]=事業所名
+    新形式: 36協定書_事業所名_様式第9号 → parts[0]が文字列 → parts[1]=事業所名
     """
     parts = stem.split('_', 2)
-    if len(parts) >= 3:
+    if len(parts) < 2:
+        return None
+    if parts[0].isdigit() and len(parts) >= 3:
         return parts[2]
-    return None
+    return parts[1]
 
 
 def match_word_files(
@@ -44,7 +49,7 @@ def match_word_files(
     """事業所名に最も近い Word ファイルを返す。
 
     優先順位:
-    1. ファイル名の事業所名部分（0001_36協定書_事業所名 の3番目）で完全一致
+    1. ファイル名から抽出した事業所名部分（新旧形式対応）で完全一致
     2. ファイル名の事業所名部分で部分一致
     3. ファイル名全体での従来マッチング（フォールバック）
     """
@@ -96,23 +101,34 @@ def build_match_table(
     return results
 
 
-def convert_docx_to_pdf(docx_path: Path, output_dir: Path) -> Path | None:
-    """LibreOffice headless で Word → PDF 変換"""
+def convert_docx_to_pdf(docx_path: Path, output_dir: Path) -> tuple[Path | None, str]:
+    """LibreOffice headless で Word → PDF 変換。
+
+    Returns:
+        (pdf_path, error_msg): 成功時は (Path, "")、失敗時は (None, エラーメッセージ)
+    """
     try:
-        result = subprocess.run(
-            [
-                "libreoffice", "--headless",
-                "--convert-to", "pdf",
-                "--outdir", str(output_dir),
-                str(docx_path),
-            ],
-            capture_output=True,
-            text=True,
-            timeout=60,
-        )
+        with tempfile.TemporaryDirectory(prefix='lo_profile_') as lo_profile:
+            result = subprocess.run(
+                [
+                    "libreoffice", "--headless", "--norestore",
+                    f"--env=UserInstallation=file://{lo_profile}",
+                    "--convert-to", "pdf",
+                    "--outdir", str(output_dir),
+                    str(docx_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
         if result.returncode != 0:
-            return None
+            err = result.stderr.strip() or f"returncode={result.returncode}"
+            return None, f"LibreOffice変換失敗: {err}"
         pdf_path = output_dir / (docx_path.stem + ".pdf")
-        return pdf_path if pdf_path.exists() else None
-    except Exception:
-        return None
+        if not pdf_path.exists():
+            return None, "PDF出力ファイルが見つかりません"
+        return pdf_path, ""
+    except subprocess.TimeoutExpired:
+        return None, "LibreOffice変換タイムアウト（120秒）"
+    except Exception as e:
+        return None, f"変換エラー: {e}"
