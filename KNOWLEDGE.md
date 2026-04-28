@@ -372,6 +372,176 @@ python3 compare_with_originals.py
 
 ---
 
+## 🖨️ BUG-PDF-001: 游明朝フォント → Streamlit Cloud（Linux）でレイアウト崩れ
+
+- **症状**: 実クライアントのWordファイル（游明朝フォント使用）をLibreOfficeで変換するとフォントが代替され、レイアウト崩れ・文字化けが発生
+- **原因**: 游明朝はWindowsプロプライエタリフォント。Linux環境のLibreOfficeにはない
+- **根本解決**: Microsoft個人アカウント（OneDrive）経由でGraph APIを使い、MicrosoftのWordエンジンで変換する。Wordエンジンはフォントを完全再現する
+- **変換優先順位（pdf_convert関数）**:
+  1. 個人MSアカウント: `ms_client_id` + `ms_refresh_token` がSecretsにあれば最優先
+  2. M365 Business: `ms_tenant_id` + `ms_client_id` + `ms_client_secret`（不使用）
+  3. LibreOffice: フォールバック（フォントずれが起きる）
+- **発見日**: 2026-04-27
+- **NEVER REPEAT**: 游明朝・メイリオ等Windowsフォント使用のWordをLinuxクラウドで変換してはいけない。Graph API経由を必ず使う
+
+---
+
+## 🔑 Microsoft Graph API 個人アカウント設定ナレッジ（2026-04-28 確立）
+
+### 概要
+
+個人Microsoftアカウント（@yahoo.co.jp等でも可）のOneDriveを経由してWord→PDFを高品質変換する方法。
+コスト: 無料（OneDriveの無料枠5GBで十分）。課金は一切なし。
+
+### Step 1: Azure アプリ登録（初回のみ・5分）
+
+1. https://portal.azure.com にアクセス（Microsoftアカウントでサインイン）
+   - 既存のAzureサブスクリプションがなくても**無料サインアップで可能**
+   - クレジットカード認証が必要（課金はされない）
+2. 「Microsoft Entra ID」→「アプリの登録」→「新規登録」
+3. 設定内容:
+   - 名前: 任意（例: 36kyotei-converter）
+   - **サポートされるアカウントの種類: 「個人のMicrosoftアカウントのみ」**
+   - リダイレクトURI: 「パブリック クライアント/ネイティブ」→ `http://localhost`
+4. 登録後、「アプリケーション（クライアント）ID」（GUID）をメモ
+5. 「認証」タブ → 「設定」タブ → **「パブリック クライアント フローを許可する」を「はい」**に → 保存
+6. 「APIのアクセス許可」→「アクセス許可の追加」→「Microsoft Graph」→「委任されたアクセス許可」→ **「Files.ReadWrite」** を追加
+
+### Step 2: リフレッシュトークン取得スクリプト実行
+
+```bash
+# WSL/Linux環境で実行
+sudo apt install python3.12-venv -y  # venvが使えない場合
+python3 -m venv /tmp/msauth-venv
+/tmp/msauth-venv/bin/pip install msal
+
+# 出力をファイルに保存（重要: -u でバッファリング無効化）
+python -u /tmp/yasuda-clone/setup_ms_auth.py --client-id <client_id> 2>&1 | tee /tmp/ms_token.txt
+```
+
+→ ブラウザで表示URLにアクセス → Microsoftアカウントでログイン → 認証成功
+
+### Step 3: Streamlit Secrets に設定
+
+```toml
+ms_client_id = "ada2db61-..."
+ms_refresh_token = "M.C527_SN1.0.U.-..."  # 1行で！改行禁止
+ms_user_email = "asahiroumu@yahoo.co.jp"
+"担当者名" = "飯塚"  # メール署名
+```
+
+**重要**: ms_refresh_tokenは1行で貼ること。改行が入ると「Invalid format」エラー。
+
+---
+
+## 🚨 BUG-MSAUTH-001: AADSTS9002346 — `/common` endpoint 使用禁止
+
+- **症状**: `AADSTS9002346: Application xxx is not supported over the /common or /organizations endpoint`
+- **原因**: AzureアプリをPERSONAL ACCOUNTS ONLYで登録した場合、`/common`や`/organizations`エンドポイントは使えない
+- **修正**: `setup_ms_auth.py` と `graph_converter.py` の `_AUTHORITY` を変更
+  ```python
+  # NG
+  _AUTHORITY = "https://login.microsoftonline.com/common"
+  # OK
+  _AUTHORITY = "https://login.microsoftonline.com/consumers"
+  ```
+- **発見日**: 2026-04-28
+- **NEVER REPEAT**: 個人アカウント専用アプリは必ず `/consumers` エンドポイントを使う
+
+---
+
+## 🚨 BUG-MSAUTH-002: AADSTS70002 — パブリッククライアントフロー未設定
+
+- **症状**: `AADSTS70002: The request body must contain the following parameter: 'client_secret'`
+- **原因**: Azure Portal でデバイスコードフロー（パブリッククライアント）が有効化されていない
+- **修正**:
+  1. Azure Portal → 対象アプリ → 「認証」タブ
+  2. 「設定」タブ（下にスクロール） → **「パブリック クライアント フローを許可する」→「はい」**
+  3. 保存
+- **発見日**: 2026-04-28
+- **NEVER REPEAT**: アプリ登録後、必ずこの設定を有効化してからsetup_ms_auth.pyを実行する
+
+---
+
+## 🚨 BUG-MSAUTH-003: リフレッシュトークンがスクリーンショット/コピーで切れる
+
+- **症状**: 取得したリフレッシュトークンをStreamlit Secretsに設定しても「PDF 0件」になる
+- **原因**: 長いトークン（400文字超）をスクリーンショットやチャットからのコピーで取得すると途中で切れる・改行が混入する
+- **修正**: 必ず `| tee /tmp/ms_token.txt` でファイルに保存し、そのファイルを直接読み込む
+  ```bash
+  python -u setup_ms_auth.py --client-id <id> 2>&1 | tee /tmp/ms_token.txt
+  # → /tmp/ms_token.txt を直接開いてコピー（スクショ厳禁）
+  ```
+- **トークン有効性確認コマンド**:
+  ```bash
+  /tmp/msauth-venv/bin/python3 -c "
+  import msal, requests
+  app = msal.PublicClientApplication('CLIENT_ID', authority='https://login.microsoftonline.com/consumers')
+  r = app.acquire_token_by_refresh_token('REFRESH_TOKEN', scopes=['https://graph.microsoft.com/Files.ReadWrite'])
+  token = r['access_token']
+  resp = requests.get('https://graph.microsoft.com/v1.0/me/drive', headers={'Authorization': f'Bearer {token}'})
+  print('✅ OneDriveアクセス成功:', resp.json().get('driveType'), resp.json().get('quota', {}).get('total', 0))
+  "
+  ```
+- **発見日**: 2026-04-28
+- **NEVER REPEAT**: トークン取得は必ずファイル保存→ファイルから読む。スクリーンショット・チャットコピーは使わない
+
+---
+
+## 📋 事業所番号マッチング（2026-04-28 追加）
+
+### ファイル命名規則
+
+```
+0001_36協定書_事業所名.docx   ← 事業所番号付き（推奨）
+36協定書_事業所名_様式第9号.docx  ← 旧形式（事業所名マッチング）
+```
+
+### マッチング優先順位（word_matcher.py）
+
+1. **ファイル名先頭4桁の事業所番号**（最優先・全角半角問題を回避）
+2. 事業所名の完全一致（NFKC正規化済み）
+3. 事業所名の部分一致
+4. ファイル名全体での従来マッチング（フォールバック）
+
+### Excel AT列（46列目）について
+
+- AT列に事業所番号（例: `0001`）を入力すると番号マッチングが有効になる
+- AT列が空欄の場合: データ行番号（2行目=`0001`, 3行目=`0002`...）で自動補完
+
+---
+
+## 📧 メールテンプレートと費用区分（2026-04-28 確定）
+
+| 区分 | ファイル名の条件 | 費用 | メール本文の違い |
+|------|----------------|------|----------------|
+| 標準 | 「36協定及び1年変形」を含まない | 5,000円/事業所 | 通常の返信依頼 |
+| 年間カレンダーあり | 「36協定及び1年変形」を含む | 12,000円/事業所 | 「年間カレンダーと合わせてご返信ください」 |
+
+判定は `app.py` の `_run_pdf_only()` 内で自動実行（ユーザー操作不要）。
+
+### Streamlit Secrets 完全テンプレ（yasuda-36kyotei 最新）
+
+```toml
+password = "asahi"
+yahoo_user = "asahiroumu@yahoo.co.jp"
+yahoo_password = "bd19960605!"
+"差出人名" = "あさひ労務管理センター"
+"差出人所属" = "社会保険労務士法人あさひ労務管理センター"
+"差出人電話" = "029-8370-209"
+"担当者名" = "飯塚"
+ms_client_id = "ada2db61-b29f-425c-9bf3-71987aa6b23c"
+ms_refresh_token = "<setup_ms_auth.pyの出力・1行で>"
+ms_user_email = "asahiroumu@yahoo.co.jp"
+```
+
+**重要ルール**:
+- 日本語キーは必ず `"..."` で囲む（TOML仕様）
+- `ms_refresh_token` は必ず1行で貼る（改行禁止）
+- `担当者名` はメール署名に使われる（未設定だと `差出人名` にフォールバック → 「あさひ労務管理センター」になる）
+
+---
+
 ## 📁 関連ファイル
 
 | ファイル | 役割 |
