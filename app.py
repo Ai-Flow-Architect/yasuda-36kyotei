@@ -511,7 +511,8 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                     convert_errors.append(f"{name}: {pdf_err}")
                     continue
 
-                pdf_filename = f"36協定書_{name}.pdf"
+                office_num = record.get("事業所番号", "")
+                pdf_filename = f"{office_num}_36協定書_{name}.pdf" if office_num else f"36協定書_{name}.pdf"
                 pdf_zf.writestr(pdf_filename, pdf_bytes)
 
                 pdf_data.append({
