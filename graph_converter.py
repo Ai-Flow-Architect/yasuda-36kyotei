@@ -16,7 +16,7 @@ GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 TEMP_FOLDER = "36kyotei_temp"
 
 # 個人アカウント用 Azure パブリックアプリ設定
-_AUTHORITY = "https://login.microsoftonline.com/common"
+_AUTHORITY = "https://login.microsoftonline.com/consumers"
 _SCOPES = ["https://graph.microsoft.com/Files.ReadWrite"]
 
 

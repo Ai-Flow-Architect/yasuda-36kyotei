@@ -25,7 +25,7 @@ import sys
 
 import msal
 
-_AUTHORITY = "https://login.microsoftonline.com/common"
+_AUTHORITY = "https://login.microsoftonline.com/consumers"
 _SCOPES = ["https://graph.microsoft.com/Files.ReadWrite"]
 _DEFAULT_EMAIL = "asahiroumu@yahoo.co.jp"
 
