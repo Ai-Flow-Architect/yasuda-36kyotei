@@ -66,6 +66,9 @@ EMAIL_COLUMN: int = 44  # AR列
 # 様式パターン手動上書き列（AS列: 10/10_2 など自動判定外を明示指定するときに使用）
 FORM_PATTERN_OVERRIDE_COLUMN: int = 45  # AS列
 
+# 事業所番号列（AT列: "0001"など。ファイル名先頭番号とのマッチングに使用。空欄でも可）
+OFFICE_NUMBER_COLUMN: int = 46  # AT列
+
 
 # ---------- 様式判定ルール（優先順位付きリスト構造） ----------
 # 各ルールは (判定関数, 返却値) のタプル。上から順に評価し、最初にTrueを返したルールが適用される。
@@ -159,6 +162,13 @@ def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
         # 案内文（I列=9列目: 飯塚様の回収シートのメール本文）
         案内_val = ws.cell(row=row_num, column=9).value
         record["案内文"] = str(案内_val).strip() if 案内_val else ""
+
+        # 事業所番号（AT列）: "0001"など。空欄の場合は行番号を4桁ゼロ埋めで自動生成
+        office_num_val = ws.cell(row=row_num, column=OFFICE_NUMBER_COLUMN).value
+        office_num_str = str(office_num_val).strip() if office_num_val else ""
+        if not office_num_str:
+            office_num_str = str(row_num - 1).zfill(4)  # 2行目→0001, 3行目→0002...
+        record["事業所番号"] = office_num_str
 
         # 様式パターン手動上書き（AS列）: 10/10_2 など自動判定外を明示指定
         override_val = ws.cell(row=row_num, column=FORM_PATTERN_OVERRIDE_COLUMN).value
