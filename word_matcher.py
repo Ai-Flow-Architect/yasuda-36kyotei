@@ -42,28 +42,48 @@ def _extract_company_from_filename(stem: str) -> str | None:
     return parts[1]
 
 
+def _extract_number_from_filename(stem: str) -> str | None:
+    """ファイル名先頭の事業所番号を抽出する（例: 0001_36協定書_... → "0001"）。
+    先頭セグメントが数字のみの場合のみ抽出する。
+    """
+    parts = stem.split('_', 1)
+    if parts[0].isdigit():
+        return parts[0].zfill(4)
+    return None
+
+
 def match_word_files(
     company_name: str,
     word_paths: list[Path],
+    office_number: str = "",
 ) -> Path | None:
-    """事業所名に最も近い Word ファイルを返す。
+    """事業所名（または事業所番号）に最も近い Word ファイルを返す。
 
     優先順位:
-    1. ファイル名から抽出した事業所名部分（新旧形式対応）で完全一致
-    2. ファイル名の事業所名部分で部分一致
-    3. ファイル名全体での従来マッチング（フォールバック）
+    1. ファイル名先頭の事業所番号と完全一致（最優先・全角半角に依存しない）
+    2. ファイル名から抽出した事業所名部分で完全一致
+    3. ファイル名の事業所名部分で部分一致
+    4. ファイル名全体での従来マッチング（フォールバック）
     """
+    # 最優先: 事業所番号によるマッチング（ゼロ埋め正規化して比較）
+    if office_number:
+        normalized_num = office_number.strip().zfill(4)
+        for wp in word_paths:
+            file_num = _extract_number_from_filename(wp.stem)
+            if file_num and file_num == normalized_num:
+                return wp
+
     target = _normalize(company_name)
     if not target:
         return None
 
-    # 優先: 命名規則ファイル名（3番目セグメント）での完全一致
+    # 命名規則ファイル名（事業所名セグメント）での完全一致
     for wp in word_paths:
         extracted = _extract_company_from_filename(wp.stem)
         if extracted and _normalize(extracted) == target:
             return wp
 
-    # 優先: 命名規則ファイル名での部分一致
+    # 命名規則ファイル名での部分一致
     for wp in word_paths:
         extracted = _extract_company_from_filename(wp.stem)
         if extracted:
@@ -90,7 +110,8 @@ def build_match_table(
     results = []
     for rec in records:
         name = rec.get("事業所名") or ""
-        matched = match_word_files(name, word_paths)
+        office_number = rec.get("事業所番号") or ""
+        matched = match_word_files(name, word_paths, office_number=office_number)
         suffix = matched.suffix.upper().lstrip(".") if matched else ""
         results.append({
             "事業所名": name,
