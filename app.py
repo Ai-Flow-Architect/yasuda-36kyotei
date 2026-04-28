@@ -327,11 +327,6 @@ def main() -> None:
     </div>
     """, unsafe_allow_html=True)
 
-    st.info(
-        "**PDF推奨**: WordファイルをWindowsのWordで「名前を付けて保存 → PDF」してからアップロードすると品質100%になります。\n"
-        "WordのままアップロードするとLinux上でPDF変換されるため、フォント置換によりレイアウトがずれる場合があります。"
-    )
-
     uploaded_words = st.file_uploader(
         "完成済み36協定書（.pdf / .docx / .doc）を選択（複数可）",
         type=["pdf", "docx", "doc"],
