@@ -188,6 +188,24 @@ def pdf_convert(docx_path: Path, output_dir: Path) -> tuple[bytes | None, str]:
     return (pdf_path.read_bytes() if pdf_path else None), err
 
 
+WORD_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+
+
+def _guess_mime(filename: str) -> str:
+    """ファイル名から MIME タイプを推定する（見本ファイル用）"""
+    ext = Path(filename).suffix.lower()
+    return {
+        ".pdf": "application/pdf",
+        ".docx": WORD_MIME,
+        ".doc": "application/msword",
+        ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        ".xls": "application/vnd.ms-excel",
+        ".png": "image/png",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+    }.get(ext, "application/octet-stream")
+
+
 # ============================================================
 # Yahoo IMAP設定をSecretsから取得
 # ============================================================
@@ -233,6 +251,7 @@ def main() -> None:
         "pdf_data": [],
         "draft_results": [],
         "_word_tmp_dir": "",
+        "sample_files": [],  # 見本ファイル: list[tuple[bytes, filename, mime_type]]
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -436,6 +455,30 @@ def main() -> None:
             "「36協定及び1年変形」を含むファイル → 12,000円版、それ以外 → 5,000円版"
         )
 
+        # 見本ファイル（全宛先共通で添付）アップローダー
+        st.markdown("**📎 見本ファイル（全宛先のメールに共通で添付されます）**")
+        sample_uploads = st.file_uploader(
+            "見本書類（PDF・Word・画像など、複数選択可）",
+            type=["pdf", "docx", "doc", "xlsx", "xls", "png", "jpg", "jpeg"],
+            accept_multiple_files=True,
+            key="sample_uploader",
+            label_visibility="collapsed",
+            help="ここにアップロードしたファイルは、全ての事業所宛てメール下書きに共通で添付されます。",
+        )
+        if sample_uploads:
+            sample_files: list[tuple[bytes, str, str]] = []
+            for up in sample_uploads:
+                data = up.read()
+                sample_files.append((data, up.name, _guess_mime(up.name)))
+            st.session_state.sample_files = sample_files
+            for up, (data, _, _) in zip(sample_uploads, sample_files):
+                st.caption(f"・{up.name}（{len(data)//1024}KB）")
+        else:
+            st.session_state.sample_files = []
+            st.caption("見本を添付しない場合はそのまま次へ進めます。")
+
+        st.markdown("---")
+
         # 締切月入力（メール本文の「〇月15日」を設定）
         first_record = st.session_state.pdf_data[0].get("record", {}) if st.session_state.pdf_data else {}
         try:
@@ -459,7 +502,11 @@ def main() -> None:
                 type="primary",
                 use_container_width=True,
             ):
-                _run_draft_only(st.session_state.pdf_data, imap_config)
+                _run_draft_only(
+                    st.session_state.pdf_data,
+                    imap_config,
+                    sample_files=st.session_state.sample_files,
+                )
 
         # 下書き保存結果
         if st.session_state.draft_results:
@@ -536,8 +583,18 @@ def _run_pdf_only(match_table: list[dict]) -> None:
     st.rerun()
 
 
-def _run_draft_only(pdf_data: list[dict], imap_config: dict) -> None:
-    """保存済みPDFデータをもとにYahoo下書きを一括保存する"""
+def _run_draft_only(
+    pdf_data: list[dict],
+    imap_config: dict,
+    sample_files: list[tuple[bytes, str, str]] | None = None,
+) -> None:
+    """保存済みPDFデータをもとにYahoo下書きを一括保存する
+
+    Args:
+        sample_files: 全宛先共通で添付する見本ファイル一覧
+            [(file_bytes, filename, mime_type), ...]
+    """
+    sample_files = sample_files or []
     results = []
     total = len(pdf_data)
     progress = st.progress(0, text="下書き保存中...")
@@ -566,8 +623,10 @@ def _run_draft_only(pdf_data: list[dict], imap_config: dict) -> None:
             imap_user=imap_config.get("yahoo_user", ""),
             imap_password=imap_config.get("yahoo_password", ""),
             from_address=imap_config.get("yahoo_user", ""),
+            extra_attachments=sample_files,
         )
-        results.append({"事業所名": name, "宛先": email_addr, "結果": res["status"]})
+        sample_note = f"（添付{1 + len(sample_files)}件・見本{len(sample_files)}件）" if sample_files else ""
+        results.append({"事業所名": name, "宛先": email_addr, "結果": f"{res['status']}{sample_note}"})
 
     progress.empty()
     st.session_state.draft_results = results
