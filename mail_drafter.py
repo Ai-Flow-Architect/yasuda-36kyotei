@@ -84,14 +84,20 @@ def _ascii_fallback(filename: str, idx: int = 0) -> str:
     return f"{ascii_base}{ext}"
 
 
-def _build_attachment_part(pdf_bytes: bytes, pdf_filename: str, idx: int = 0) -> MIMEBase:
-    """互換性最大化PDF添付パートを生成する
+def _build_attachment_part(
+    file_bytes: bytes,
+    filename: str,
+    mime_type: str = "application/pdf",
+    idx: int = 0,
+) -> MIMEBase:
+    """互換性最大化添付パートを生成する（PDF・Word・画像など任意MIME対応）
 
     Python email モジュールが自動で挿入する RFC 2231 形式を使わず、
     手動で RFC 2047 B-encoding を含む全形式を直接ヘッダーに書き込む。
     """
-    part = MIMEBase("application", "pdf")
-    part.set_payload(pdf_bytes)
+    main_type, sub_type = mime_type.split("/", 1) if "/" in mime_type else ("application", "octet-stream")
+    part = MIMEBase(main_type, sub_type)
+    part.set_payload(file_bytes)
     encoders.encode_base64(part)
 
     # Python が自動で付けたヘッダーをいったん削除
@@ -101,14 +107,14 @@ def _build_attachment_part(pdf_bytes: bytes, pdf_filename: str, idx: int = 0) ->
         del part["Content-Disposition"]
 
     # 1. 日本語ファイル名 → RFC 2047 B-encoding
-    encoded_name = _rfc2047_b_encode(pdf_filename)
+    encoded_name = _rfc2047_b_encode(filename)
     # 2. ASCII フォールバック名（極端な互換用）
-    ascii_name = _ascii_fallback(pdf_filename, idx)
+    ascii_name = _ascii_fallback(filename, idx)
     # 3. RFC 2231 用 URL エンコード
-    url_encoded = quote(pdf_filename, safe="")
+    url_encoded = quote(filename, safe="")
 
-    # Content-Type: application/pdf; name="=?UTF-8?B?...?="
-    part["Content-Type"] = f'application/pdf; name="{encoded_name}"'
+    # Content-Type: <mime_type>; name="=?UTF-8?B?...?="
+    part["Content-Type"] = f'{mime_type}; name="{encoded_name}"'
 
     # Content-Disposition:
     #   attachment;
@@ -121,7 +127,7 @@ def _build_attachment_part(pdf_bytes: bytes, pdf_filename: str, idx: int = 0) ->
     )
     part["Content-Disposition"] = cd
 
-    logger.debug(f"[添付ヘッダー] {pdf_filename} → encoded={encoded_name}, ascii={ascii_name}")
+    logger.debug(f"[添付ヘッダー] {filename} → encoded={encoded_name}, ascii={ascii_name}, mime={mime_type}")
     return part
 
 
@@ -133,8 +139,14 @@ def _build_message(
     pdf_filename: str,
     from_address: str,
     idx: int = 0,
+    extra_attachments: list[tuple[bytes, str, str]] | None = None,
 ) -> bytes:
-    """MIMEメッセージを組み立てて bytes を返す"""
+    """MIMEメッセージを組み立てて bytes を返す
+
+    Args:
+        extra_attachments: 追加で添付するファイル一覧（見本ファイル等）
+            [(file_bytes, filename, mime_type), ...]
+    """
     msg = MIMEMultipart("mixed")
     msg["From"] = from_address
     msg["To"] = to_address
@@ -148,9 +160,15 @@ def _build_message(
     text_part = MIMEText(body, "plain", "utf-8")
     msg.attach(text_part)
 
-    # PDF 添付
-    pdf_part = _build_attachment_part(pdf_bytes, pdf_filename, idx)
+    # PDF 添付（メイン）
+    pdf_part = _build_attachment_part(pdf_bytes, pdf_filename, "application/pdf", idx)
     msg.attach(pdf_part)
+
+    # 追加添付（見本ファイル等）
+    if extra_attachments:
+        for j, (fbytes, fname, mtype) in enumerate(extra_attachments):
+            extra = _build_attachment_part(fbytes, fname, mtype, idx + j + 1)
+            msg.attach(extra)
 
     return msg.as_bytes()
 
@@ -165,6 +183,7 @@ def save_draft(
     imap_password: str,
     from_address: str = "",
     idx: int = 0,
+    extra_attachments: list[tuple[bytes, str, str]] | None = None,
 ) -> dict:
     """Yahoo IMAP経由でPDF添付メールを下書きフォルダに保存する（リトライ付き）
 
@@ -178,6 +197,8 @@ def save_draft(
         imap_password: Yahoo パスワード（IMAP用アプリパスワード）
         from_address: 差出人アドレス（省略時は imap_user）
         idx: 連番（ASCII フォールバック名生成用）
+        extra_attachments: 見本ファイル等の追加添付
+            [(file_bytes, filename, mime_type), ...]
 
     Returns:
         {"to": str, "subject": str, "status": str, "attempts": int}
@@ -204,6 +225,7 @@ def save_draft(
             pdf_filename=pdf_filename,
             from_address=sender,
             idx=idx,
+            extra_attachments=extra_attachments,
         )
     except Exception as e:
         result["status"] = f"失敗: メッセージ組み立てエラー: {e}"
