@@ -6,12 +6,14 @@ __pycache__/
 *.egg-info/
 
 # 認証情報・Cookie（絶対にコミットしない）
+credentials/
 .streamlit/secrets.toml
 config_local.json
 yahoo_cookies.json
 *_cookies.json
 .env
 .env.*
+!.env.example
 
 # 生成物（成果物・テスト結果）
 output/
@@ -29,3 +31,9 @@ desktop.ini
 # IDE
 .vscode/
 .idea/
+
+# 開発メモ（クライアント情報含む・gitに載せない）
+KNOWLEDGE.md
+PDF_TRACE_KNOWLEDGE.md
+KNOWLEDGE.md.archive*
+handover*.md
