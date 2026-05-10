@@ -1,6 +1,6 @@
 """
 36協定 Excel読み取りモジュール
-安田さんのExcelテンプレート（43列: A〜AQ）からデータを読み取る
+社労士事務所向け36協定Excelテンプレート（43列: A〜AQ）からデータを読み取る
 """
 import logging
 from typing import Any
@@ -159,7 +159,7 @@ def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
                 email_str = f_str
         record["メールアドレス"] = email_str
 
-        # 案内文（I列=9列目: 飯塚様の回収シートのメール本文）
+        # 案内文（I列=9列目: 回収シートのメール本文）
         案内_val = ws.cell(row=row_num, column=9).value
         record["案内文"] = str(案内_val).strip() if 案内_val else ""
 

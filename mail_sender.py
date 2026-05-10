@@ -173,7 +173,7 @@ def build_email_body(
         except (ValueError, TypeError):
             締切月 = "○"
 
-    担当者名 = config.get("担当者名") or config.get("差出人名", "飯塚")
+    担当者名 = config.get("担当者名") or config.get("差出人名", "")
     return template.format(
         宛先会社名=data.get("事業所名", ""),
         宛先担当者名=data.get("事業主名", "ご担当者"),
@@ -188,7 +188,7 @@ def build_subject(data: dict[str, str]) -> str:
 
 
 if __name__ == "__main__":
-    config: dict[str, str] = {"差出人名": "飯塚", "締切月": "3"}
+    config: dict[str, str] = {"差出人名": "サンプル太郎", "締切月": "3"}
     data: dict[str, str] = {"事業主名": "テスト太郎", "事業所名": "テスト株式会社", "更新月": "4"}
 
     print("=== 標準（5,000円）===")

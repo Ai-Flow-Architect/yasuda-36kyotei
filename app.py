@@ -2,7 +2,7 @@
 36協定自動化ツール - Streamlit Webアプリ（Pattern A）
 社労士事務所向け。
 Excel（管理情報）+ Word（完成済み協定書）をアップロード
-→ 事業所名マッチング → Word→PDF変換（飯塚様確認）→ Yahoo Mail 下書き一括保存
+→ 事業所名マッチング → Word→PDF変換 → Yahoo Mail 下書き一括保存
 """
 import base64
 import io

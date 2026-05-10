@@ -407,13 +407,13 @@ class TestBuildEmailBody:
     def test_normal_body(self):
         """正常系: テンプレートにデータが埋め込まれる"""
         data = {"事業主名": "佐藤花子", "事業所名": "サクラ株式会社"}
-        config = {"差出人名": "安田", "差出人所属": "朝日事務所", "差出人電話": "03-0000-0000"}
+        config = {"差出人名": "サンプル太郎", "差出人所属": "サンプル社労士事務所", "差出人電話": "03-0000-0000"}
 
         body = build_email_body(data, config)
         assert "佐藤花子" in body
         assert "サクラ株式会社" in body
-        assert "安田" in body
-        assert "朝日事務所" in body
+        assert "サンプル太郎" in body
+        assert "サンプル社労士事務所" in body
 
     def test_empty_data_uses_defaults(self):
         """空データでもデフォルト値が使われてエラーにならない"""
@@ -428,7 +428,7 @@ class TestBuildEmailBody:
         data = {"事業主名": "田中太郎", "事業所名": "タナカ社"}
         config = {
             "メールテンプレート": "{宛先名}様へ。{事業主名}の書類です。{差出人名}{差出人所属}{差出人電話}",
-            "差出人名": "安田",
+            "差出人名": "サンプル太郎",
             "差出人所属": "事務所",
             "差出人電話": "000",
         }
@@ -436,7 +436,7 @@ class TestBuildEmailBody:
         # 宛先名はdata["事業主名"]、事業主名はdata["事業所名"]が埋め込まれる仕様
         assert "田中太郎様へ" in body
         assert "タナカ社の書類です" in body
-        assert "安田" in body
+        assert "サンプル太郎" in body
 
     def test_body_contains_signature(self):
         """デフォルトテンプレートに署名区切り線が含まれる"""
