@@ -283,10 +283,10 @@ print("テスト4: メール機能")
 print("=" * 60)
 
 # メール本文生成
-config = {"差出人名": "安田", "差出人所属": "朝日事務所", "差出人電話": "03-0000-0000"}
+config = {"差出人名": "サンプル太郎", "差出人所属": "サンプル社労士事務所", "差出人電話": "03-0000-0000"}
 d = base_data()
 body = build_email_body(d, config)
-if "山田太郎" in body and "テスト株式会社" in body and "安田" in body:
+if "山田太郎" in body and "テスト株式会社" in body and "サンプル太郎" in body:
     log_pass("メール本文生成（宛先名・事業所名・差出人名が含まれる）")
 else:
     log_fail("メール本文生成", f"期待する文字列が本文に含まれない:\n{body}")

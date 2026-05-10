@@ -24,7 +24,7 @@ echo.
 echo 処理を開始します...
 echo.
 
-python main.py "%EXCEL_FILE%" --output-dir "%OUTPUT_DIR%" --from-name "安田" --from-org "朝日事務所"
+python main.py "%EXCEL_FILE%" --output-dir "%OUTPUT_DIR%" --from-name "サンプル太郎" --from-org "サンプル社労士事務所"
 
 echo.
 echo ========================================
