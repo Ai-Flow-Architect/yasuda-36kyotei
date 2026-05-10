@@ -37,3 +37,9 @@ KNOWLEDGE.md
 PDF_TRACE_KNOWLEDGE.md
 KNOWLEDGE.md.archive*
 handover*.md
+SECURITY_NOTES.md
+
+# バックアップ・一時ファイル（CLAUDE.md 追跡禁止ルール）
+*.bak
+*~
+*.tmp
