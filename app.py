@@ -9,20 +9,29 @@ import io
 import os
 import sys
 import tempfile
+import traceback
 import zipfile
 from pathlib import Path
 
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).parent))
-from excel_reader import read_excel
-from graph_converter import convert_docx_to_pdf_graph, convert_docx_to_pdf_graph_personal
-from mail_drafter import save_draft
-from mail_sender import (
-    build_email_body, build_subject,
-    FEE_TYPE_STANDARD, FEE_TYPE_ANNUAL_CALENDAR,
-)
-from word_matcher import build_match_table, convert_docx_to_pdf
+
+# 起動時の import エラーを画面に出す（"Oh no. Error running app." の代わりに具体的な原因を表示）
+try:
+    from excel_reader import read_excel
+    from graph_converter import convert_docx_to_pdf_graph, convert_docx_to_pdf_graph_personal
+    from mail_drafter import save_draft
+    from mail_sender import (
+        build_email_body, build_subject,
+        FEE_TYPE_STANDARD, FEE_TYPE_ANNUAL_CALENDAR,
+    )
+    from word_matcher import build_match_table, convert_docx_to_pdf
+except Exception as _import_err:
+    st.set_page_config(page_title="36協定自動化ツール", page_icon="📄", layout="centered")
+    st.error("⚠️ アプリの起動に失敗しました（モジュール読み込みエラー）")
+    st.code(f"{type(_import_err).__name__}: {_import_err}\n\n{traceback.format_exc()}")
+    st.stop()
 
 # ============================================================
 # ページ設定
