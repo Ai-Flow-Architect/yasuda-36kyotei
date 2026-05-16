@@ -396,6 +396,7 @@ def main() -> None:
             "事業所名": row["事業所名"],
             "送信先メール": row["送信先メール"],
             "協定書ファイル": row["協定書ファイル"],
+            "件数": row.get("件数", 0),
             "形式": row["形式"],
         }
         for row in match_table
@@ -417,8 +418,9 @@ def main() -> None:
     )
 
     # PDF準備ボタン（PDF直接アップロードの場合は「変換」ではなく「読み込み」）
-    pdf_count = sum(1 for r in match_table if r["_matched_path"] and r["_matched_path"].suffix.lower() == ".pdf")
-    word_count = matched_count - pdf_count
+    all_paths = [p for r in match_table for p in r.get("_matched_paths", [])]
+    pdf_count = sum(1 for p in all_paths if p.suffix.lower() == ".pdf")
+    word_count = len(all_paths) - pdf_count
     if not st.session_state.pdf_zip_bytes:
         btn_label = "📄 PDFを準備する"
         if pdf_count > 0 and word_count == 0:
@@ -550,34 +552,56 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                 progress.progress((i + 1) / total, text=f"PDF変換中... {i+1}/{total}")
                 name = row["事業所名"]
                 email_addr = str(row["送信先メール"])
-                matched_path = row["_matched_path"]
+                matched_paths = row.get("_matched_paths") or []
                 record: dict = row["_record"]
 
-                if matched_path is None:
+                if not matched_paths:
                     convert_errors.append(f"{name}: ファイル未マッチ")
                     continue
 
-                # PDF直接アップロードの場合は変換スキップ
-                if matched_path.suffix.lower() == ".pdf":
-                    pdf_bytes = matched_path.read_bytes()
-                    pdf_err = ""
-                else:
-                    pdf_bytes, pdf_err = pdf_convert(matched_path, Path(pdf_out_dir))
-                if pdf_bytes is None:
-                    convert_errors.append(f"{name}: {pdf_err}")
-                    continue
-
+                # 1事業所に複数の協定書（様式9号＋9号の2＋1年変形等）がある場合、
+                # すべてPDF化して同じメール下書きに添付する（バグ①対応）
                 office_num = record.get("事業所番号", "")
-                pdf_filename = f"{office_num}_36協定書_{name}.pdf" if office_num else f"36協定書_{name}.pdf"
-                pdf_zf.writestr(pdf_filename, pdf_bytes)
+                converted: list[tuple[bytes, str]] = []  # [(pdf_bytes, pdf_filename), ...]
+                for j, matched_path in enumerate(matched_paths):
+                    if matched_path.suffix.lower() == ".pdf":
+                        pdf_bytes = matched_path.read_bytes()
+                        pdf_err = ""
+                    else:
+                        pdf_bytes, pdf_err = pdf_convert(matched_path, Path(pdf_out_dir))
+                    if pdf_bytes is None:
+                        convert_errors.append(f"{name}（{matched_path.name}）: {pdf_err}")
+                        continue
+                    # 複数ファイルはファイル名衝突を避けるため元ファイル名を保持
+                    base = matched_path.stem
+                    if len(matched_paths) == 1:
+                        pdf_filename = (
+                            f"{office_num}_36協定書_{name}.pdf"
+                            if office_num else f"36協定書_{name}.pdf"
+                        )
+                    else:
+                        pdf_filename = (
+                            f"{office_num}_{base}.pdf" if office_num else f"{base}.pdf"
+                        )
+                    pdf_zf.writestr(pdf_filename, pdf_bytes)
+                    converted.append((pdf_bytes, pdf_filename))
 
+                if not converted:
+                    continue  # 全件変換失敗（個別エラーは記録済み）
+
+                primary_bytes, primary_name = converted[0]
+                extra_kyotei = [
+                    (b, fn, "application/pdf") for b, fn in converted[1:]
+                ]
                 pdf_data.append({
                     "事業所名": name,
                     "email_addr": email_addr,
                     "record": record,
-                    "pdf_bytes": pdf_bytes,
-                    "pdf_filename": pdf_filename,
-                    "word_filename": matched_path.name,
+                    "pdf_bytes": primary_bytes,
+                    "pdf_filename": primary_name,
+                    "extra_kyotei": extra_kyotei,
+                    "kyotei_count": len(converted),
+                    "word_filename": " ".join(mp.name for mp in matched_paths),
                 })
 
     progress.empty()
@@ -623,6 +647,10 @@ def _run_draft_only(
 
         subject = build_subject(item["record"])
         body = build_email_body(item["record"], imap_config, fee_type=auto_fee)
+
+        # 追加添付 = 同一事業所の2件目以降の協定書PDF ＋ 全宛先共通の見本ファイル
+        extra_kyotei = item.get("extra_kyotei", [])
+        extra_attachments = list(extra_kyotei) + list(sample_files)
         res = save_draft(
             to_address=email_addr,
             subject=subject,
@@ -632,9 +660,16 @@ def _run_draft_only(
             imap_user=imap_config.get("yahoo_user", ""),
             imap_password=imap_config.get("yahoo_password", ""),
             from_address=imap_config.get("yahoo_user", ""),
-            extra_attachments=sample_files,
+            extra_attachments=extra_attachments,
         )
-        sample_note = f"（添付{1 + len(sample_files)}件・見本{len(sample_files)}件）" if sample_files else ""
+        kyotei_n = item.get("kyotei_count", 1)
+        note_parts = []
+        if kyotei_n > 1:
+            note_parts.append(f"協定書{kyotei_n}件")
+        if sample_files:
+            note_parts.append(f"見本{len(sample_files)}件")
+        total_att = kyotei_n + len(sample_files)
+        sample_note = f"（添付{total_att}件・" + "・".join(note_parts) + "）" if note_parts else ""
         results.append({"事業所名": name, "宛先": email_addr, "結果": f"{res['status']}{sample_note}"})
 
     progress.empty()

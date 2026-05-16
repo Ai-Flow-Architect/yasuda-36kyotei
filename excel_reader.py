@@ -60,6 +60,13 @@ COLUMN_MAP: dict[str, int] = {
     "所轄労基署": 43,                # AQ
 }
 
+# メール宛名の担当者名列を検出するためのヘッダーキーワード
+# 運用シート（回収シート）は担当者名の列位置が固定でない（I列等）ため、
+# 列番号ではなくヘッダー文字列で検出する（バグ②: 宛名が事業所コードになる問題対応）
+RECIPIENT_HEADER_KEYWORDS: tuple[str, ...] = (
+    "担当者名", "ご担当者", "宛名", "宛先担当者", "担当者", "ご担当",
+)
+
 # メールアドレス列（デモ用に追加）
 EMAIL_COLUMN: int = 44  # AR列
 
@@ -121,6 +128,52 @@ FORM_TYPE_RULES: list[tuple[Any, str]] = [
 DEFAULT_FORM_TYPE: str = "9"
 
 
+def _detect_recipient_column(ws: Worksheet) -> int | None:
+    """ヘッダー行(1行目)から「担当者名／宛名」列の列番号を検出する。
+
+    運用シート（回収シート）は担当者名列の位置がテンプレートと異なる（I列など）。
+    列番号固定だと事業主名(E列)等を誤って宛名に使い、結果として
+    事業所コードが宛名に表示される（バグ②）。ヘッダー文字列で検出して
+    位置非依存にする。完全一致を優先し、なければ部分一致でフォールバック。
+    """
+    headers: list[tuple[int, str]] = []
+    for col in range(1, ws.max_column + 1):
+        v = ws.cell(row=1, column=col).value
+        if v is not None:
+            headers.append((col, str(v).strip()))
+
+    # 1. 完全一致（最も信頼度が高い）
+    for kw in RECIPIENT_HEADER_KEYWORDS:
+        for col, h in headers:
+            if h == kw:
+                return col
+    # 2. 部分一致（「担当者名（ご署名者）」等の表記ゆれを吸収）
+    for kw in RECIPIENT_HEADER_KEYWORDS:
+        for col, h in headers:
+            if kw in h:
+                return col
+    return None
+
+
+def _looks_like_office_code(value: str, office_number: str = "") -> bool:
+    """値が事業所コード（宛名に使ってはいけない値）かどうか判定する。
+
+    バグ②: 担当者名のつもりの列に事業所コードが入っていた場合、
+    "0001 様" のような不自然な宛名を絶対に出さないためのガード。
+    """
+    v = str(value).strip()
+    if not v:
+        return True
+    # 数字・記号のみ（例: "0001", "12-3", "001号"）は人名ではない
+    if not any(ch.isalpha() or "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in v):
+        return True
+    # 事業所番号と一致（ゼロ埋め揺れも吸収）
+    on = str(office_number).strip()
+    if on and (v == on or v.zfill(4) == on.zfill(4)):
+        return True
+    return False
+
+
 def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
     """Excelファイルから全行のデータを読み取る
 
@@ -136,6 +189,12 @@ def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
 
     records: list[dict[str, str]] = []
     warnings: list[str] = []
+
+    # メール宛名に使う担当者名列をヘッダーから検出（位置非依存・バグ②対応）
+    recipient_col = _detect_recipient_column(ws)
+    if recipient_col:
+        logger.info("担当者名列を検出: 列%d", recipient_col)
+
     # 2行目からデータ行（1行目はヘッダー）
     for row_num in range(2, ws.max_row + 1):
         # 事業所名（D列）が空ならスキップ
@@ -169,6 +228,21 @@ def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
         if not office_num_str:
             office_num_str = str(row_num - 1).zfill(4)  # 2行目→0001, 3行目→0002...
         record["事業所番号"] = office_num_str
+
+        # メール宛名用 担当者名（バグ②）
+        # 優先: ヘッダー検出した担当者名列 → 事業主名(E列) → 空
+        # 事業所コードが混入していたら宛名に使わない（ガード）
+        担当者名 = ""
+        if recipient_col:
+            rv = ws.cell(row=row_num, column=recipient_col).value
+            rv_str = str(rv).strip() if rv is not None else ""
+            if rv_str and not _looks_like_office_code(rv_str, office_num_str):
+                担当者名 = rv_str
+        if not 担当者名:
+            ej = record.get("事業主名", "")
+            if ej and not _looks_like_office_code(ej, office_num_str):
+                担当者名 = ej
+        record["担当者名"] = 担当者名
 
         # 様式パターン手動上書き（AS列）: 10/10_2 など自動判定外を明示指定
         override_val = ws.cell(row=row_num, column=FORM_PATTERN_OVERRIDE_COLUMN).value

@@ -174,12 +174,45 @@ def build_email_body(
             締切月 = "○"
 
     担当者名 = config.get("担当者名") or config.get("差出人名", "")
+
+    # 宛名（バグ②: 事業所コードが宛名になる問題対応）
+    # 優先: excel_readerが確定した data["担当者名"] → 事業主名 → "ご担当者"
+    # 数字のみ/事業所番号と一致する値は人名ではないため宛名に使わない
+    宛名候補 = (
+        str(data.get("担当者名", "")).strip()
+        or str(data.get("事業主名", "")).strip()
+    )
+    if not 宛名候補 or _is_office_code_like(宛名候補, str(data.get("事業所番号", ""))):
+        宛先担当者名 = "ご担当者"
+    else:
+        宛先担当者名 = 宛名候補
+
     return template.format(
         宛先会社名=data.get("事業所名", ""),
-        宛先担当者名=data.get("事業主名", "ご担当者"),
+        宛先担当者名=宛先担当者名,
         締切月=締切月,
         担当者名=担当者名,
     )
+
+
+def _is_office_code_like(value: str, office_number: str = "") -> bool:
+    """値が事業所コード等（人名でない）かを判定する宛名ガード。
+
+    excel_reader 側でもガードしているが、build_email_body が
+    単体で呼ばれる経路（テスト・将来の再利用）でも安全側に倒すため
+    二重ガードとして実装する。
+    """
+    v = str(value).strip()
+    if not v:
+        return True
+    if not any(
+        ch.isalpha() or "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in v
+    ):
+        return True
+    on = str(office_number).strip()
+    if on and (v == on or v.zfill(4) == on.zfill(4)):
+        return True
+    return False
 
 
 def build_subject(data: dict[str, str]) -> str:
