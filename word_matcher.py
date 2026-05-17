@@ -28,18 +28,55 @@ def _normalize(name: str) -> str:
     ).lower()
 
 
+# 様式サフィックス語（事業所名の後ろに付くため会社名から除去する）。
+# 例: 0010_36協定書_丸和_様式第9号 / 36協定書_テスト工業_1年単位
+_FORM_SUFFIX_PREFIXES = ('様式第', '様式', '1年単位', '1年変形', '変形', '一年単位', '一年変形')
+
+
+def _is_form_suffix_segment(seg: str) -> bool:
+    """セグメントが様式サフィックス（会社名ではない）かどうか判定する。
+
+    単純な startswith では「変形製作所」「様式工業」「1年単位フーズ」など
+    様式語で始まる正当な会社名まで誤って様式サフィックス扱いし、会社名が
+    丸ごと消えて添付漏れになる（バグ①と同クラスの逆方向退行）。
+    そのため「セグメント全体が様式語」または「様式語の直後が数字/号/の」
+    （= 様式第9号 / 様式第9号の2 / 様式9号 等の実在パターン）に限定する。
+    """
+    for p in _FORM_SUFFIX_PREFIXES:
+        if seg == p:
+            return True
+        if seg.startswith(p):
+            rest = seg[len(p):]
+            if rest and (rest[0].isdigit() or rest[0] in ('号', 'の')):
+                return True
+    return False
+
+
 def _extract_company_from_filename(stem: str) -> str | None:
     """ファイル名ステム（拡張子なし）から事業所名部分を抽出する。
 
-    旧形式: 0001_36協定書_事業所名 → parts[0]が数字 → parts[2]=事業所名
-    新形式: 36協定書_事業所名_様式第9号 → parts[0]が文字列 → parts[1]=事業所名
+    旧形式: 0001_36協定書_事業所名 → parts[0]が数字 → parts[2]起点が事業所名
+    新形式: 36協定書_事業所名_様式第9号 → parts[0]が文字列 → parts[1]起点が事業所名
+
+    会社名の後ろに付く様式サフィックス（様式第9号 / 様式第9号の2 /
+    1年単位 / 1年変形 等）はバグ①の誤添付要因になるため除去し、純粋な
+    会社名のみを返す（番号prefix欠落＋部分文字列社名の誤マッチ防止）。
     """
-    parts = stem.split('_', 2)
+    parts = stem.split('_')
     if len(parts) < 2:
         return None
     if parts[0].isdigit() and len(parts) >= 3:
-        return parts[2]
-    return parts[1]
+        company_parts = parts[2:]   # 旧形式: 番号_36協定書_<会社名…>
+    else:
+        company_parts = parts[1:]   # 新形式: 36協定書_<会社名…>
+    # 様式サフィックスセグメントを末尾から落とし、純company名を組み立てる
+    pure: list[str] = []
+    for seg in company_parts:
+        if _is_form_suffix_segment(seg):
+            break
+        pure.append(seg)
+    company = '_'.join(pure).strip()
+    return company or None
 
 
 def _extract_number_from_filename(stem: str) -> str | None:
@@ -61,9 +98,8 @@ def match_word_files(
 
     優先順位:
     1. ファイル名先頭の事業所番号と完全一致（最優先・全角半角に依存しない）
-    2. ファイル名から抽出した事業所名部分で完全一致
-    3. ファイル名の事業所名部分で部分一致
-    4. ファイル名全体での従来マッチング（フォールバック）
+    2. 様式サフィックス除去後の事業所名で厳格一致（誤添付防止のため完全一致のみ）
+    3. ファイル名全体での完全一致（フォールバック）
     """
     # 最優先: 事業所番号によるマッチング（ゼロ埋め正規化して比較）
     if office_number:
@@ -77,27 +113,20 @@ def match_word_files(
     if not target:
         return None
 
-    # 命名規則ファイル名（事業所名セグメント）での完全一致
+    # 命名規則ファイル名（様式サフィックス除去後の事業所名セグメント）での
+    # 厳格一致。単純な部分文字列一致（例: 丸和 ⊂ 丸和興業）は他事業所の
+    # 協定書を誤添付する重大インシデント要因のため採用せず、正規化後の
+    # 完全一致のみとする。
     for wp in word_paths:
         extracted = _extract_company_from_filename(wp.stem)
         if extracted and _normalize(extracted) == target:
             return wp
 
-    # 命名規則ファイル名での部分一致
-    for wp in word_paths:
-        extracted = _extract_company_from_filename(wp.stem)
-        if extracted:
-            norm_extracted = _normalize(extracted)
-            if target in norm_extracted or norm_extracted in target:
-                return wp
-
-    # フォールバック: ファイル名全体での従来マッチング
+    # フォールバック: ファイル名全体での従来マッチング（完全一致のみ）
+    # 番号prefixや様式サフィックス込みの単純部分一致は他事業所の協定書を
+    # 誤添付する要因（例: 丸和 ⊂ 丸和興業）のため、ここでは採用しない。
     for wp in word_paths:
         if _normalize(wp.stem) == target:
-            return wp
-    for wp in word_paths:
-        stem = _normalize(wp.stem)
-        if target in stem or stem in target:
             return wp
     return None
 
@@ -115,9 +144,8 @@ def match_word_files_multi(
 
     優先順位（最初に1件以上ヒットした階層の全件を返す）:
       1. ファイル名先頭の事業所番号と完全一致（最優先・全角半角非依存）
-      2. ファイル名から抽出した事業所名部分で完全一致
-      3. ファイル名の事業所名部分で部分一致
-      4. ファイル名全体での従来マッチング（フォールバック）
+      2. 様式サフィックス除去後の事業所名で厳格一致（誤添付防止・完全一致のみ）
+      3. ファイル名全体での完全一致（フォールバック）
     """
     # 1. 事業所番号マッチング（最優先・複数様式は同番号プレフィックスを共有する想定）
     if office_number:
@@ -133,7 +161,9 @@ def match_word_files_multi(
     if not target:
         return []
 
-    # 2. 事業所名セグメント完全一致
+    # 2. 事業所名セグメント厳格一致（様式サフィックス除去後の完全一致のみ）
+    # 単純な部分文字列一致は他事業所の協定書を誤添付する重大インシデント
+    # 要因（例: 丸和 ⊂ 丸和興業）のため、正規化後完全一致のみ採用する。
     exact = [
         wp for wp in word_paths
         if (ex := _extract_company_from_filename(wp.stem)) and _normalize(ex) == target
@@ -141,24 +171,10 @@ def match_word_files_multi(
     if exact:
         return exact
 
-    # 3. 事業所名セグメント部分一致
-    partial = []
-    for wp in word_paths:
-        ex = _extract_company_from_filename(wp.stem)
-        if ex:
-            norm_ex = _normalize(ex)
-            if target in norm_ex or norm_ex in target:
-                partial.append(wp)
-    if partial:
-        return partial
-
-    # 4. フォールバック: ファイル名全体マッチング
-    whole = [
-        wp for wp in word_paths
-        if (_normalize(wp.stem) == target
-            or target in _normalize(wp.stem)
-            or _normalize(wp.stem) in target)
-    ]
+    # 3. フォールバック: ファイル名全体マッチング（完全一致のみ）
+    # 番号prefixや様式サフィックス込みの単純部分一致は他事業所の協定書を
+    # 誤添付する要因（例: 丸和 ⊂ 丸和興業）のため、ここでは採用しない。
+    whole = [wp for wp in word_paths if _normalize(wp.stem) == target]
     return whole
 
 

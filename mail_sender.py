@@ -14,6 +14,10 @@ from pathlib import Path
 from typing import Optional
 from urllib.parse import quote
 
+# 事業所コード判定ロジックは excel_reader に一本化（DRY・保守事故防止）。
+# 旧 _is_office_code_like と完全同一ロジックだったため共通化した。
+from excel_reader import _looks_like_office_code
+
 logger = logging.getLogger("yasuda_36kyotei")
 
 MAX_RETRIES: int = 3
@@ -198,21 +202,11 @@ def build_email_body(
 def _is_office_code_like(value: str, office_number: str = "") -> bool:
     """値が事業所コード等（人名でない）かを判定する宛名ガード。
 
-    excel_reader 側でもガードしているが、build_email_body が
-    単体で呼ばれる経路（テスト・将来の再利用）でも安全側に倒すため
-    二重ガードとして実装する。
+    判定ロジックは excel_reader._looks_like_office_code に一本化済み。
+    片方だけ修正される保守事故を防ぐため、このラッパーは委譲のみ行う
+    （build_email_body 単体経路の後方互換のため関数名は維持）。
     """
-    v = str(value).strip()
-    if not v:
-        return True
-    if not any(
-        ch.isalpha() or "぀" <= ch <= "ヿ" or "一" <= ch <= "鿿" for ch in v
-    ):
-        return True
-    on = str(office_number).strip()
-    if on and (v == on or v.zfill(4) == on.zfill(4)):
-        return True
-    return False
+    return _looks_like_office_code(value, office_number)
 
 
 def build_subject(data: dict[str, str]) -> str:

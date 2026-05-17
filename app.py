@@ -538,11 +538,33 @@ def main() -> None:
     _show_footer()
 
 
+def _dedupe_zip_name(name: str, used_names: set[str]) -> str:
+    """ZIP内ファイル名の衝突を避ける。
+
+    同一事業所が同名stemの協定書を複数持つ場合、後勝ち上書きで
+    1件サイレント欠落するため、衝突時は連番サフィックス（_2,_3…）を
+    付与してからwritestrする。
+    """
+    if name not in used_names:
+        used_names.add(name)
+        return name
+    stem, dot, ext = name.rpartition(".")
+    base = stem if dot else name
+    suffix = f".{ext}" if dot else ""
+    n = 2
+    while f"{base}_{n}{suffix}" in used_names:
+        n += 1
+    unique = f"{base}_{n}{suffix}"
+    used_names.add(unique)
+    return unique
+
+
 def _run_pdf_only(match_table: list[dict]) -> None:
     """Word→PDF変換のみ実行し、ZIPとpdf_dataをsession_stateに保存する"""
     pdf_zip_buf = io.BytesIO()
     pdf_data = []
     convert_errors = []
+    used_zip_names: set[str] = set()  # ZIP内ファイル名衝突防止（サイレント欠落対策）
     total = len(match_table)
     progress = st.progress(0, text="PDF変換中...")
 
@@ -583,6 +605,7 @@ def _run_pdf_only(match_table: list[dict]) -> None:
                         pdf_filename = (
                             f"{office_num}_{base}.pdf" if office_num else f"{base}.pdf"
                         )
+                    pdf_filename = _dedupe_zip_name(pdf_filename, used_zip_names)
                     pdf_zf.writestr(pdf_filename, pdf_bytes)
                     converted.append((pdf_bytes, pdf_filename))
 
