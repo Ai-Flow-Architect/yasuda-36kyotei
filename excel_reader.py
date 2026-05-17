@@ -160,6 +160,10 @@ def _looks_like_office_code(value: str, office_number: str = "") -> bool:
 
     バグ②: 担当者名のつもりの列に事業所コードが入っていた場合、
     "0001 様" のような不自然な宛名を絶対に出さないためのガード。
+
+    ※ この関数が事業所コード判定の唯一の正（canonical）。
+      mail_sender._is_office_code_like はここへ委譲しているため、
+      ロジック変更時はこの関数のみ修正すればよい（DRY一本化済み）。
     """
     v = str(value).strip()
     if not v:
