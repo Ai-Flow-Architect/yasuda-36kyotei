@@ -498,12 +498,25 @@ def main() -> None:
                 default_締切月 = "12"
         except (ValueError, TypeError):
             default_締切月 = ""
-        締切月 = st.text_input(
-            "締切月（例: 4 と入力すると「4月15日まで」とメールに記載されます）",
-            value=default_締切月,
-            key="締切月_input",
+        col_month, col_day = st.columns(2)
+        with col_month:
+            締切月 = st.text_input(
+                "締切月（例: 4）",
+                value=default_締切月,
+                key="締切月_input",
+            )
+        with col_day:
+            締切日 = st.text_input(
+                "締切日（例: 15）",
+                value="15",
+                key="締切日_input",
+            )
+        st.caption(
+            f"→ メール本文に「{締切月 or '〇'}月{締切日 or '〇'}日まで」と記載されます。"
+            "日付は自由に変更できます。"
         )
         imap_config["締切月"] = 締切月
+        imap_config["締切日"] = 締切日
 
         confirmed = st.checkbox("PDFの内容を確認しました。Yahoo メールの下書きに保存します。")
 
