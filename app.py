@@ -26,6 +26,9 @@ try:
         build_email_body, build_subject,
         FEE_TYPE_STANDARD, FEE_TYPE_ANNUAL_CALENDAR,
     )
+    from sample_selector import (
+        build_extra_attachments, has_any_sample_spec, select_samples_for_record,
+    )
     from word_matcher import build_match_table, convert_docx_to_pdf
 except Exception as _import_err:
     st.set_page_config(page_title="36協定自動化ツール", page_icon="📄", layout="centered")
@@ -466,15 +469,37 @@ def main() -> None:
             "「36協定及び1年変形」を含むファイル → 12,000円版、それ以外 → 5,000円版"
         )
 
-        # 見本ファイル（全宛先共通で添付）アップローダー
-        st.markdown("**📎 見本ファイル（全宛先のメールに共通で添付されます）**")
+        # 見本出し分けモード判定:
+        # Excelの「見本指定」列に1件でも入力があれば事業所ごとの出し分け、
+        # なければ従来どおり全宛先共通で添付する。
+        per_office_samples = has_any_sample_spec(records)
+
+        if per_office_samples:
+            st.markdown("**📎 見本ファイル（事業所ごとに出し分けて添付します）**")
+            st.info(
+                "📌 **事業所ごとの出し分けモード**\n\n"
+                "Excelの「見本指定」列に書かれたファイル名と、ここにアップロードした"
+                "見本を照合し、各事業所には指定された見本だけを添付します。"
+                "出し分けに使う見本は、まとめてここにアップロードしてください。"
+            )
+            sample_help = (
+                "ここにアップロードした見本のうち、Excelの「見本指定」列で"
+                "指定されたものだけが各事業所のメールに添付されます。"
+            )
+        else:
+            st.markdown("**📎 見本ファイル（全宛先のメールに共通で添付されます）**")
+            sample_help = (
+                "ここにアップロードしたファイルは、全ての事業所宛てメール下書きに"
+                "共通で添付されます。"
+            )
+
         sample_uploads = st.file_uploader(
             "見本書類（PDF・Word・画像など、複数選択可）",
             type=["pdf", "docx", "doc", "xlsx", "xls", "png", "jpg", "jpeg"],
             accept_multiple_files=True,
             key="sample_uploader",
             label_visibility="collapsed",
-            help="ここにアップロードしたファイルは、全ての事業所宛てメール下書きに共通で添付されます。",
+            help=sample_help,
         )
         if sample_uploads:
             sample_files: list[tuple[bytes, str, str]] = []
@@ -487,6 +512,15 @@ def main() -> None:
         else:
             st.session_state.sample_files = []
             st.caption("見本を添付しない場合はそのまま次へ進めます。")
+
+        # 出し分けモードでは「どの事業所にどの見本が付くか」を事前プレビューし、
+        # 指定したのにプールに無い見本（タイプミス／アップロード漏れ）を警告する。
+        # 見本をまだアップロードしていない段階では全件が未一致になり誤解を招くため、
+        # アップロード後にのみプレビューを表示する。
+        if per_office_samples and st.session_state.sample_files:
+            _show_sample_match_preview(
+                st.session_state.pdf_data, st.session_state.sample_files
+            )
 
         st.markdown("---")
 
@@ -664,6 +698,9 @@ def _run_draft_only(
             [(file_bytes, filename, mime_type), ...]
     """
     sample_files = sample_files or []
+    # 見本出し分けモード判定: いずれかのレコードに「見本指定」があれば事業所ごと、
+    # なければ従来どおり全宛先共通で添付する。
+    per_office = has_any_sample_spec([it.get("record", {}) for it in pdf_data])
     results = []
     total = len(pdf_data)
     progress = st.progress(0, text="下書き保存中...")
@@ -684,9 +721,15 @@ def _run_draft_only(
         subject = build_subject(item["record"])
         body = build_email_body(item["record"], imap_config, fee_type=auto_fee)
 
-        # 追加添付 = 同一事業所の2件目以降の協定書PDF ＋ 全宛先共通の見本ファイル
+        # 追加添付（協定書2件目以降＋見本）を組み立てる。
+        # 出し分けモードなら「見本指定」に一致した見本のみ、共通モードなら全見本。
         extra_kyotei = item.get("extra_kyotei", [])
-        extra_attachments = list(extra_kyotei) + list(sample_files)
+        extra_attachments, this_samples, _ = build_extra_attachments(
+            extra_kyotei,
+            sample_files,
+            item.get("record", {}).get("見本指定", ""),
+            per_office,
+        )
         res = save_draft(
             to_address=email_addr,
             subject=subject,
@@ -699,17 +742,54 @@ def _run_draft_only(
             extra_attachments=extra_attachments,
         )
         kyotei_n = item.get("kyotei_count", 1)
+        sample_n = len(this_samples)
         note_parts = []
         if kyotei_n > 1:
             note_parts.append(f"協定書{kyotei_n}件")
-        if sample_files:
-            note_parts.append(f"見本{len(sample_files)}件")
-        total_att = kyotei_n + len(sample_files)
+        if sample_n:
+            note_parts.append(f"見本{sample_n}件")
+        total_att = kyotei_n + sample_n
         sample_note = f"（添付{total_att}件・" + "・".join(note_parts) + "）" if note_parts else ""
         results.append({"事業所名": name, "宛先": email_addr, "結果": f"{res['status']}{sample_note}"})
 
     progress.empty()
     st.session_state.draft_results = results
+
+
+def _show_sample_match_preview(
+    pdf_data: list[dict],
+    sample_files: list[tuple[bytes, str, str]],
+) -> None:
+    """出し分けモードで「どの事業所にどの見本が付くか」を事前プレビューする。
+
+    Excelの「見本指定」で指定したのにプールに無い見本（タイプミス／
+    アップロード漏れ）はサイレント欠落になるため、警告で可視化する。
+    """
+    if not pdf_data:
+        return
+    rows = []
+    any_unmatched = False
+    for item in pdf_data:
+        record = item.get("record", {})
+        spec = str(record.get("見本指定", "") or "").strip()
+        selected, unmatched = select_samples_for_record(spec, sample_files)
+        if unmatched:
+            any_unmatched = True
+        rows.append({
+            "事業所名": item.get("事業所名", ""),
+            "見本指定": spec or "（なし）",
+            "添付される見本": "／".join(s[1] for s in selected) if selected else "（なし）",
+            "未一致の指定": "／".join(unmatched) if unmatched else "",
+        })
+
+    st.markdown("**🔍 見本の出し分けプレビュー**")
+    st.dataframe(rows, use_container_width=True, hide_index=True)
+    if any_unmatched:
+        st.warning(
+            "⚠️ 「未一致の指定」がある事業所は、その見本がアップロードされていないか"
+            "ファイル名が一致していません。見本のアップロードとExcelの「見本指定」の"
+            "綴りをご確認ください（一致しない指定は添付されません）。"
+        )
 
 
 def _show_footer():

@@ -76,6 +76,16 @@ FORM_PATTERN_OVERRIDE_COLUMN: int = 45  # AS列
 # 事業所番号列（AT列: "0001"など。ファイル名先頭番号とのマッチングに使用。空欄でも可）
 OFFICE_NUMBER_COLUMN: int = 46  # AT列
 
+# 見本指定列（AU列: その事業所へ添付する見本ファイル名。空欄でも可）
+# 列番号は固定フォールバック。実運用シートでは位置が異なりうるため、
+# 担当者名列と同様にヘッダー文字列でも検出する（位置非依存）。
+SAMPLE_SPEC_COLUMN: int = 47  # AU列
+
+# 見本指定列をヘッダーから検出するためのキーワード
+SAMPLE_SPEC_HEADER_KEYWORDS: tuple[str, ...] = (
+    "見本指定", "添付見本", "見本ファイル", "見本", "サンプル指定", "サンプル",
+)
+
 
 # ---------- 様式判定ルール（優先順位付きリスト構造） ----------
 # 各ルールは (判定関数, 返却値) のタプル。上から順に評価し、最初にTrueを返したルールが適用される。
@@ -128,13 +138,14 @@ FORM_TYPE_RULES: list[tuple[Any, str]] = [
 DEFAULT_FORM_TYPE: str = "9"
 
 
-def _detect_recipient_column(ws: Worksheet) -> int | None:
-    """ヘッダー行(1行目)から「担当者名／宛名」列の列番号を検出する。
+def _detect_column_by_header(ws: Worksheet, keywords: tuple[str, ...]) -> int | None:
+    """ヘッダー行(1行目)から、キーワードに該当する列の列番号を検出する。
 
-    運用シート（回収シート）は担当者名列の位置がテンプレートと異なる（I列など）。
-    列番号固定だと事業主名(E列)等を誤って宛名に使い、結果として
-    事業所コードが宛名に表示される（バグ②）。ヘッダー文字列で検出して
-    位置非依存にする。完全一致を優先し、なければ部分一致でフォールバック。
+    運用シート（回収シート）は列位置がテンプレートと異なる（I列など）。
+    列番号固定だと別の列を誤って使うため、ヘッダー文字列で検出して位置非依存に
+    する。完全一致を優先し、なければ部分一致でフォールバックする。
+    キーワードはより限定的（長い）ものを先に渡す＝「見本指定」を「見本」より
+    優先評価できる順序にしておくこと。
     """
     headers: list[tuple[int, str]] = []
     for col in range(1, ws.max_column + 1):
@@ -143,16 +154,26 @@ def _detect_recipient_column(ws: Worksheet) -> int | None:
             headers.append((col, str(v).strip()))
 
     # 1. 完全一致（最も信頼度が高い）
-    for kw in RECIPIENT_HEADER_KEYWORDS:
+    for kw in keywords:
         for col, h in headers:
             if h == kw:
                 return col
     # 2. 部分一致（「担当者名（ご署名者）」等の表記ゆれを吸収）
-    for kw in RECIPIENT_HEADER_KEYWORDS:
+    for kw in keywords:
         for col, h in headers:
             if kw in h:
                 return col
     return None
+
+
+def _detect_recipient_column(ws: Worksheet) -> int | None:
+    """ヘッダー行から「担当者名／宛名」列の列番号を検出する（位置非依存・バグ②対応）。"""
+    return _detect_column_by_header(ws, RECIPIENT_HEADER_KEYWORDS)
+
+
+def _detect_sample_spec_column(ws: Worksheet) -> int | None:
+    """ヘッダー行から「見本指定」列の列番号を検出する（位置非依存）。"""
+    return _detect_column_by_header(ws, SAMPLE_SPEC_HEADER_KEYWORDS)
 
 
 def _looks_like_office_code(value: str, office_number: str = "") -> bool:
@@ -198,6 +219,11 @@ def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
     recipient_col = _detect_recipient_column(ws)
     if recipient_col:
         logger.info("担当者名列を検出: 列%d", recipient_col)
+
+    # 見本指定列をヘッダーから検出（位置非依存）。なければAU列(47)を固定フォールバック。
+    sample_spec_col = _detect_sample_spec_column(ws)
+    if sample_spec_col:
+        logger.info("見本指定列を検出: 列%d", sample_spec_col)
 
     # 2行目からデータ行（1行目はヘッダー）
     for row_num in range(2, ws.max_row + 1):
@@ -247,6 +273,15 @@ def read_excel(file_path: str) -> tuple[list[dict[str, str]], list[str]]:
             if ej and not _looks_like_office_code(ej, office_num_str):
                 担当者名 = ej
         record["担当者名"] = 担当者名
+
+        # 見本指定（その事業所へ添付する見本ファイル名。空欄可）
+        # ヘッダー検出列を優先し、無ければAU列(47)を固定フォールバックで読む。
+        sample_spec = ""
+        spec_col = sample_spec_col or SAMPLE_SPEC_COLUMN
+        if spec_col <= ws.max_column:
+            sv = ws.cell(row=row_num, column=spec_col).value
+            sample_spec = str(sv).strip() if sv is not None else ""
+        record["見本指定"] = sample_spec
 
         # 様式パターン手動上書き（AS列）: 10/10_2 など自動判定外を明示指定
         override_val = ws.cell(row=row_num, column=FORM_PATTERN_OVERRIDE_COLUMN).value
