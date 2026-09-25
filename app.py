@@ -121,7 +121,7 @@ def check_password() -> bool:
     #   この画面が開いた。画面は正常に見えるので当方も客様も気づけない。
     #   本番の目印は Streamlit Community Cloud の配置先（/mount/src）。
     #   ローカル開発は従来どおり素通し（目印が無い＝開発機）。
-    #   手本＝saita-homyo-ai `_require_auth()`（2026-09-14）。検査＝app_hardening_check.py。
+    #   手本＝寺院-G様(client_g) 案件の `_require_auth()`（2026-09-14）。検査＝app_hardening_check.py。
     if not correct_pw:
         on_cloud = (str(os.path.dirname(os.path.abspath(__file__))).startswith("/mount/src")
                     or os.environ.get("KYOTEI_PRODUCTION") == "1")
